@@ -60,7 +60,21 @@ class PumpPortalScanner:
                     await self.connect()
 
                 message = await self.websocket.recv()
-                data = json.loads(message)
+                try:
+                    data = json.loads(message)
+                except json.JSONDecodeError:
+                    logger.debug("Mensagem não-JSON ignorada: %.80s", message[:80] if isinstance(message, str) else "<bytes>")
+                    continue
+                # API pode enviar payload dentro de data["message"] (string JSON)
+                if "message" in data and "method" not in data and "result" not in data:
+                    try:
+                        inner = json.loads(data["message"]) if isinstance(data["message"], str) else data["message"]
+                        data = inner
+                    except (json.JSONDecodeError, TypeError):
+                        if not _logged_structure:
+                            logger.debug("Estrutura 1ª mensagem PumpPortal: keys=%s", list(data.keys()))
+                            _logged_structure = True
+                        continue
                 method = data.get("method", "") or data.get("type", "") or data.get("event", "")
                 if not _logged_structure:
                     logger.debug("Estrutura 1ª mensagem PumpPortal: keys=%s", list(data.keys()))
@@ -68,7 +82,10 @@ class PumpPortalScanner:
 
                 # Formato 1: createEventNotification (API atual PumpPortal) — dados em "result"
                 if method == "createEventNotification":
-                    raw = data.get("result", {})
+                    raw = data.get("result") or {}
+                    if not isinstance(raw, dict):
+                        logger.debug("createEventNotification com result inválido: %s", type(raw).__name__)
+                        continue
                     token_data = self._normalize_create_event(raw)
                     symbol = token_data.get("symbol", "?")
                     logger.info("📥 Novo token do mercado: %s (mint=%s)", symbol, (token_data.get("mint") or "")[:12] + "...")
@@ -87,7 +104,7 @@ class PumpPortalScanner:
                 logger.warning("WebSocket fechado, reconectando em 5s...")
                 await asyncio.sleep(5)
             except Exception as e:
-                logger.error(f"Erro no scanner: {e}")
+                logger.exception("Erro no scanner PumpPortal: %s", e)
                 await asyncio.sleep(5)
 
     def _normalize_create_event(self, result: Dict[str, Any]) -> Dict[str, Any]:
