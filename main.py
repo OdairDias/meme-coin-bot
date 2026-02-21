@@ -79,6 +79,7 @@ async def lifespan(app: FastAPI):
 
     # 6) Iniciar serviços em background
     await pump_scanner.connect()
+    asyncio.create_task(pump_scanner.start())  # loop que recebe mensagens do WebSocket
     await position_manager.start()
 
     # 7) Iniciar métricas Prometheus

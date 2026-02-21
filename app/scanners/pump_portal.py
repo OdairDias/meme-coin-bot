@@ -60,11 +60,16 @@ class PumpPortalScanner:
 
                 message = await self.websocket.recv()
                 data = json.loads(message)
+                method = data.get("method", "")
+                logger.debug("Mensagem PumpPortal: method=%s", method)
 
                 # Processar mensagem
-                if data.get("method") == "newToken":
+                if method == "newToken":
                     token_data = data.get("data", {})
-                    logger.debug(f"Novo token recebido: {token_data.get('symbol')}")
+                    symbol = token_data.get("symbol", "?")
+                    market_cap = float(token_data.get("market_cap", 0))
+                    logger.info("📥 Novo token do mercado: %s (market_cap=%.0f)", symbol, market_cap)
+                    logger.debug("Payload newToken: %s", token_data)
                     await self._handle_new_token(token_data)
 
             except websockets.exceptions.ConnectionClosed:
