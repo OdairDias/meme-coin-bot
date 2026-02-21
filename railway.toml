@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+numReplicas = 1
+sleepApplication = false
+restartPolicy = { type = "always", onDenied = "delay_300" }
+
+[env]
+PYTHON_VERSION = "3.11"
