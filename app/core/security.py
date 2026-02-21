@@ -17,7 +17,7 @@ def get_wallet_keypair(private_key: str) -> Keypair:
         secret_bytes = base58.b58decode(private_key)
         if len(secret_bytes) != 64:
             raise ValueError("Private key deve ter 64 bytes após decodificação")
-        return Keypair.from_secret_key(secret_bytes)
+        return Keypair.from_bytes(secret_bytes)
     except Exception as e:
         raise ValueError(f"Falha ao carregar private key: {e}")
 
