@@ -55,10 +55,12 @@ async def lifespan(app: FastAPI):
     async def on_new_token(token_data: dict):
         """Processa novo token do PumpPortal."""
         try:
-            # Aplicar filtros iniciais (simples)
-            if token_data.get("market_cap", 0) < 1000:
+            # Aplicar filtros iniciais (só quando temos dados; createEventNotification vem sem market_cap/holders)
+            market_cap = token_data.get("market_cap", 0) or 0
+            holders = token_data.get("holders", 0) or 0
+            if market_cap > 0 and market_cap < 1000:
                 return
-            if token_data.get("holders", 0) < 3:
+            if holders > 0 and holders < 3:
                 return
 
             # Gerar sinal pela estratégia (síncrono, mas vamos rodar async)

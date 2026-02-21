@@ -51,6 +51,7 @@ class PumpPortalScanner:
 
         self.running = True
         logger.info("Iniciando PumpPortal Scanner...")
+        _logged_structure = False
 
         # Reconectar automaticamente
         while self.running:
@@ -60,16 +61,26 @@ class PumpPortalScanner:
 
                 message = await self.websocket.recv()
                 data = json.loads(message)
-                method = data.get("method", "")
-                logger.debug("Mensagem PumpPortal: method=%s", method)
+                method = data.get("method", "") or data.get("type", "") or data.get("event", "")
+                if not _logged_structure:
+                    logger.debug("Estrutura 1ª mensagem PumpPortal: keys=%s", list(data.keys()))
+                    _logged_structure = True
 
-                # Processar mensagem
+                # Formato 1: createEventNotification (API atual PumpPortal) — dados em "result"
+                if method == "createEventNotification":
+                    raw = data.get("result", {})
+                    token_data = self._normalize_create_event(raw)
+                    symbol = token_data.get("symbol", "?")
+                    logger.info("📥 Novo token do mercado: %s (mint=%s)", symbol, (token_data.get("mint") or "")[:12] + "...")
+                    await self._handle_new_token(token_data)
+                    continue
+
+                # Formato 2: newToken (legado) — dados em "data"
                 if method == "newToken":
                     token_data = data.get("data", {})
                     symbol = token_data.get("symbol", "?")
                     market_cap = float(token_data.get("market_cap", 0))
                     logger.info("📥 Novo token do mercado: %s (market_cap=%.0f)", symbol, market_cap)
-                    logger.debug("Payload newToken: %s", token_data)
                     await self._handle_new_token(token_data)
 
             except websockets.exceptions.ConnectionClosed:
@@ -78,6 +89,27 @@ class PumpPortalScanner:
             except Exception as e:
                 logger.error(f"Erro no scanner: {e}")
                 await asyncio.sleep(5)
+
+    def _normalize_create_event(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Converte payload createEventNotification (result) para formato interno."""
+        meta = result.get("metadata", {})
+        creator = result.get("creator_wallet") or {}
+        addr = creator.get("address", "") if isinstance(creator, dict) else ""
+        return {
+            "mint": result.get("mint"),
+            "symbol": result.get("symbol", "UNKNOWN"),
+            "name": result.get("name", "Unknown"),
+            "market_cap": 0,  # evento não traz; estratégia/Birdeye podem preencher
+            "volume_24h": 0,
+            "holders": 0,
+            "dev_holding_percent": 0,
+            "snipers": 0,
+            "created_at": result.get("timestamp", ""),
+            "bondingCurve": result.get("bondingCurve"),
+            "associatedBondingCurve": result.get("associatedBondingCurve"),
+            "creator_address": addr,
+            "raw": result,
+        }
 
     async def _handle_new_token(self, token_data: Dict[str, Any]):
         """Processa dados de um novo token e dispara callbacks."""
