@@ -1,8 +1,7 @@
 """
 Configurações centralizadas do MemeCoin Bot
 """
-from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import BaseSettings, Field
 
 
 class Settings(BaseSettings):
