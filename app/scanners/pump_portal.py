@@ -54,12 +54,18 @@ class PumpPortalScanner:
         _logged_structure = False
 
         # Reconectar automaticamente
+        recv_timeout = 55
         while self.running:
             try:
                 if not self.websocket or self.websocket.closed:
                     await self.connect()
 
-                message = await self.websocket.recv()
+                try:
+                    message = await asyncio.wait_for(self.websocket.recv(), timeout=recv_timeout)
+                except asyncio.TimeoutError:
+                    logger.info("PumpPortal: aguardando mensagens (conexão ativa)")
+                    continue
+
                 try:
                     data = json.loads(message)
                 except json.JSONDecodeError:
@@ -71,14 +77,10 @@ class PumpPortalScanner:
                         inner = json.loads(data["message"]) if isinstance(data["message"], str) else data["message"]
                         data = inner
                     except (json.JSONDecodeError, TypeError):
-                        if not _logged_structure:
-                            logger.debug("Estrutura 1ª mensagem PumpPortal: keys=%s", list(data.keys()))
-                            _logged_structure = True
+                        logger.debug("PumpPortal: mensagem texto/ack recebida (keys=%s)", list(data.keys()))
                         continue
                 method = data.get("method", "") or data.get("type", "") or data.get("event", "")
-                if not _logged_structure:
-                    logger.debug("Estrutura 1ª mensagem PumpPortal: keys=%s", list(data.keys()))
-                    _logged_structure = True
+                logger.debug("PumpPortal: method=%s keys=%s", method or "(vazio)", list(data.keys()))
 
                 # Formato 1: createEventNotification (API atual PumpPortal) — dados em "result"
                 if method == "createEventNotification":
