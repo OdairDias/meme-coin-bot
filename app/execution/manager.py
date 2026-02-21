@@ -16,9 +16,15 @@ logger = setup_logger(__name__)
 class PositionManager:
     """Gerencia ciclo de vida das posições (abrir, monitorar, fechar)."""
 
-    def __init__(self, executor: Executor, risk_manager: MemeRiskManager):
+    def __init__(
+        self,
+        executor: Executor,
+        risk_manager: MemeRiskManager,
+        price_fetcher=None,
+    ):
         self.executor = executor
         self.risk_manager = risk_manager
+        self.price_fetcher = price_fetcher  # ex.: BirdeyeScanner com get_token_info
         self.running = False
         self.monitor_task: asyncio.Task | None = None
 
@@ -51,12 +57,13 @@ class PositionManager:
             logger.warning(f"❌ Sinal rejeitado: {reasons}")
             return False
 
-        # Executar compra
+        # Executar compra (amount em tokens conforme doc PumpPortal: denominatedInSol=false)
         try:
             success = await self.executor.buy(
                 token_address=signal["address"],
-                quantity=signal["quantity"],
-                slippage=10.0  # 10% slippage permitido (alta volatilidade)
+                amount=signal["quantity"],
+                denominated_in_sol=False,
+                slippage=10.0,
             )
             if not success:
                 logger.error(f"Falha ao comprar {signal['symbol']}")
@@ -91,8 +98,9 @@ class PositionManager:
         try:
             success = await self.executor.sell(
                 token_address=token,
-                quantity=pos["quantity"],
-                slippage=10.0
+                amount=pos["quantity"],
+                denominated_in_sol=False,
+                slippage=10.0,
             )
             if not success:
                 logger.error(f"Falha ao vender {token}")
@@ -108,23 +116,23 @@ class PositionManager:
             return False
 
     async def _monitor_loop(self):
-        """Loop que monitora preços e verifica condições de saída."""
+        """Loop que monitora preços (Birdeye) e verifica SL/TP/timeout."""
         logger.info("Iniciando monitoramento de posições...")
         while self.running:
             try:
-                await asyncio.sleep(5)  # check a cada 5s
+                await asyncio.sleep(5)
 
-                # Atualizar preços atuais via executor (ou scanner)
-                # Por enquanto, usar preço da posição (precisamos de price feed)
-                # TODO: integrar price updates
-
-                # Verificar cada posição
                 for token, pos in list(self.risk_manager.open_positions.items()):
-                    # Preço atual (precisamos buscar)
-                    #暂时 usar entry_price (depois integrar real-time price)
-                    current_price = pos["entry_price"]  # placeholder
+                    current_price = pos["entry_price"]
+                    if self.price_fetcher:
+                        try:
+                            info = await self.price_fetcher.get_token_info(token)
+                            if info and (info.get("price_usd") or 0) > 0:
+                                current_price = float(info["price_usd"])
+                                self.risk_manager.open_positions[token]["current_price"] = current_price
+                        except Exception as e:
+                            logger.debug(f"Preço {token}: {e}")
 
-                    # Verificar condições de saída
                     exit_reason = self.risk_manager.check_exit_conditions(token, current_price)
                     if exit_reason:
                         logger.info(f"🔍 Condição de saída para {token}: {exit_reason}")

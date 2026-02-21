@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # PumpPortal
     PUMP_PORTAL_WS: str = Field(default="wss://pumpportal.fun/api/data", env="PUMP_PORTAL_WS")
     PUMP_PORTAL_API: str = Field(default="https://pumpportal.fun/api/trade-local", env="PUMP_PORTAL_API")
+    # RPC Solana (obrigatório para trade-local: assinar e enviar tx)
+    SOLANA_RPC_URL: str = Field(default="https://api.mainnet-beta.solana.com", env="SOLANA_RPC_URL")
 
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")

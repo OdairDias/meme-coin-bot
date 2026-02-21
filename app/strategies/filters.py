@@ -41,7 +41,7 @@ def apply_initial_filters(token_data: Dict[str, Any]) -> tuple[bool, str]:
     if created_at:
         # Se for timestamp recente, pule
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
             age_minutes = (datetime.now(timezone.utc) - created).total_seconds() / 60
             if age_minutes > 30:
