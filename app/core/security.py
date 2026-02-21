@@ -3,7 +3,7 @@ Gerenciamento de chaves privadas e segurança
 """
 import os
 from typing import Optional
-from solana.keypair import Keypair
+from solders.keypair import Keypair
 import base58
 
 
