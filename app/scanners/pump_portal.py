@@ -17,10 +17,14 @@ logger = setup_logger(__name__)
 class PumpPortalScanner:
     """Escaneia novos tokens via WebSocket da PumpPortal"""
 
+    # Dedupe: mesmo mint não dispara callback de novo por este tempo (segundos)
+    DEDUPE_SECONDS = 60
+
     def __init__(self):
         self.websocket: websockets.WebSocketClientProtocol | None = None
         self.running = False
         self.callbacks: list[Callable[[Dict[str, Any]], None]] = []
+        self._last_mint_seen: Dict[str, float] = {}  # mint -> timestamp
 
     def register_callback(self, callback: Callable[[Dict[str, Any]], None]):
         """Registra callback para receber novos tokens."""
@@ -101,6 +105,21 @@ class PumpPortalScanner:
                     market_cap = float(token_data.get("market_cap", 0))
                     logger.info("📥 Novo token do mercado: %s (market_cap=%.0f)", symbol, market_cap)
                     await self._handle_new_token(token_data)
+                    continue
+
+                # Formato 3: objeto direto sem "method" (mint, symbol, marketCapSol, etc.)
+                if not method and isinstance(data, dict) and data.get("mint"):
+                    mint = data.get("mint", "")
+                    now = asyncio.get_event_loop().time()
+                    if len(self._last_mint_seen) > 5000:
+                        self._last_mint_seen = {k: v for k, v in self._last_mint_seen.items() if now - v < 300}
+                    if mint and (mint not in self._last_mint_seen or (now - self._last_mint_seen[mint]) > self.DEDUPE_SECONDS):
+                        self._last_mint_seen[mint] = now
+                        token_data = self._normalize_raw_token(data)
+                        symbol = token_data.get("symbol", "?")
+                        market_cap = token_data.get("market_cap") or 0
+                        logger.info("📥 Novo token do mercado: %s (mint=%s marketCapSol=%s)", symbol, (mint or "")[:12] + "...", market_cap)
+                        await self._handle_new_token(token_data)
 
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("WebSocket fechado, reconectando em 5s...")
@@ -128,6 +147,29 @@ class PumpPortalScanner:
             "associatedBondingCurve": result.get("associatedBondingCurve"),
             "creator_address": addr,
             "raw": result,
+        }
+
+    def _normalize_raw_token(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Converte payload direto (mint, symbol, marketCapSol, ...) para formato interno."""
+        market_cap_sol = data.get("marketCapSol")
+        if market_cap_sol is not None:
+            try:
+                market_cap = float(market_cap_sol)
+            except (TypeError, ValueError):
+                market_cap = 0
+        else:
+            market_cap = float(data.get("market_cap", 0))
+        return {
+            "mint": data.get("mint"),
+            "symbol": data.get("symbol", "UNKNOWN"),
+            "name": data.get("name", "Unknown"),
+            "market_cap": market_cap,
+            "volume_24h": float(data.get("volume_24h", 0)),
+            "holders": int(data.get("holders", 0)),
+            "dev_holding_percent": float(data.get("dev_holding_percent", 0)),
+            "snipers": data.get("snipers_count", data.get("snipers", 0)),
+            "created_at": data.get("created_at", datetime.now(timezone.utc).isoformat()),
+            "raw": data,
         }
 
     async def _handle_new_token(self, token_data: Dict[str, Any]):
