@@ -21,10 +21,12 @@ class PositionManager:
         executor: Executor,
         risk_manager: MemeRiskManager,
         price_fetcher=None,
+        alerter=None,
     ):
         self.executor = executor
         self.risk_manager = risk_manager
         self.price_fetcher = price_fetcher  # ex.: BirdeyeScanner com get_token_info
+        self.alerter = alerter  # TelegramAlerter para notificações
         self.running = False
         self.monitor_task: asyncio.Task | None = None
 
@@ -74,10 +76,21 @@ class PositionManager:
                 token=signal["address"],
                 entry_price=signal["entry_price"],
                 quantity=signal["quantity"],
-                side="BUY"
+                side="BUY",
+                symbol=signal.get("symbol", ""),
             )
 
             logger.info(f"✅ Posição aberta: {signal['symbol']} qty={signal['quantity']:.6f} @ ${signal['entry_price']:.6f}")
+            if self.alerter:
+                try:
+                    await self.alerter.send_trade(
+                        symbol=signal["symbol"],
+                        side="BUY",
+                        price=signal["entry_price"],
+                        quantity=signal["quantity"],
+                    )
+                except Exception as e:
+                    logger.debug(f"Telegram (trade): {e}")
             return True
 
         except Exception as e:
@@ -91,8 +104,12 @@ class PositionManager:
             return False
 
         pos = self.risk_manager.open_positions[token]
-        # Obter preço atual (executor pode ter)
         current_price = pos.get("current_price", pos["entry_price"])
+        entry = pos["entry_price"]
+        quantity = pos["quantity"]
+        side = pos.get("side", "BUY")
+        symbol = pos.get("symbol") or token[:8]
+        symbol = symbol.decode() if isinstance(symbol, bytes) else str(symbol)
 
         # Executar venda
         try:
@@ -106,9 +123,23 @@ class PositionManager:
                 logger.error(f"Falha ao vender {token}")
                 return False
 
+            # PnL para notificação
+            if side == "BUY":
+                pnl = (current_price - entry) * quantity
+                pnl_percent = ((current_price - entry) / entry * 100) if entry > 0 else 0
+            else:
+                pnl = (entry - current_price) * quantity
+                pnl_percent = ((entry - current_price) / entry * 100) if entry > 0 else 0
+
             # Registrar fechamento
             await self.risk_manager.record_position_close(token, current_price, reason)
             logger.info(f"✅ Posição fechada: {token} motivo={reason}")
+
+            if self.alerter:
+                try:
+                    await self.alerter.send_position_closed(symbol, pnl, pnl_percent, reason)
+                except Exception as e:
+                    logger.debug(f"Telegram (fechamento): {e}")
             return True
 
         except Exception as e:

@@ -76,8 +76,8 @@ async def lifespan(app: FastAPI):
 
     pump_scanner.register_callback(on_new_token)
 
-    # 5) Inicializar PositionManager (Birdeye como price feed para SL/TP)
-    position_manager = PositionManager(executor, risk_manager, price_fetcher=birdeye)
+    # 5) Inicializar PositionManager (Birdeye como price feed para SL/TP; Telegram para alertas)
+    position_manager = PositionManager(executor, risk_manager, price_fetcher=birdeye, alerter=alerter)
 
     # 6) Iniciar serviços em background
     await pump_scanner.connect()

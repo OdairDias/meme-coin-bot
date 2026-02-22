@@ -33,12 +33,16 @@ class MemeRiskManager:
                     if pos_data:
                         token = pos_data.get("token", "")
                         self.open_positions[token] = {
-                            "id": key.decode(),
+                            "id": key.decode() if isinstance(key, bytes) else key,
                             "token": token,
+                            "symbol": pos_data.get("symbol", token[:8] if isinstance(token, str) else ""),
                             "entry_price": float(pos_data.get("entry_price", 0)),
                             "quantity": float(pos_data.get("quantity", 0)),
                             "side": pos_data.get("side", "BUY"),
-                            "opened_at": datetime.fromisoformat(pos_data.get("opened_at"))
+                            "opened_at": datetime.fromisoformat(pos_data.get("opened_at")),
+                            "current_price": float(pos_data.get("entry_price", 0)),
+                            "pnl": 0.0,
+                            "pnl_percent": 0.0,
                         }
             except Exception as e:
                 logger.error(f"Erro ao carregar estado do Redis: {e}")
@@ -75,11 +79,12 @@ class MemeRiskManager:
 
         return validation
 
-    async def record_position_open(self, token: str, entry_price: float, quantity: float, side: str = "BUY"):
+    async def record_position_open(self, token: str, entry_price: float, quantity: float, side: str = "BUY", symbol: str = ""):
         """Registra nova posição aberta."""
         pos_id = f"meme:position:{token}"
         position = {
             "token": token,
+            "symbol": symbol or token[:8],
             "entry_price": entry_price,
             "quantity": quantity,
             "side": side,
@@ -92,6 +97,7 @@ class MemeRiskManager:
         if self.redis:
             self.redis.hset(pos_id, mapping={
                 "token": token,
+                "symbol": symbol or token[:8],
                 "entry_price": entry_price,
                 "quantity": quantity,
                 "side": side,
