@@ -53,14 +53,20 @@ async def lifespan(app: FastAPI):
 
     # 4) Registrar callback do scanner
     async def on_new_token(token_data: dict):
-        """Processa novo token do PumpPortal."""
+        """Processa novo token do PumpPortal.
+
+        Modo conservador 2.0: mantemos filtros, mas um pouco mais leves
+        para permitir que mais candidatos cheguem na estratégia.
+        """
         try:
-            # Aplicar filtros iniciais (só quando temos dados; createEventNotification vem sem market_cap/holders)
+            # Aplicar filtros iniciais (mais leves e tolerantes a eventos sem dados completos)
             market_cap = token_data.get("market_cap", 0) or 0
             holders = token_data.get("holders", 0) or 0
-            if market_cap > 0 and market_cap < 1000:
+
+            # Só filtramos se vierem valores > 0 (alguns eventos vêm sem esses campos preenchidos)
+            if market_cap > 0 and market_cap < 500:
                 return
-            if holders > 0 and holders < 3:
+            if holders > 0 and holders < 2:
                 return
 
             # Gerar sinal pela estratégia (síncrono, mas vamos rodar async)

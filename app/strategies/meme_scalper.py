@@ -59,7 +59,8 @@ class MemeScalperStrategy:
             # 4) Calcular score simples (pode ser melhorado depois)
             score = self._calculate_score(asset, pattern_meta)
 
-            if score < 70:  # threshold inicial
+            # Threshold levemente relaxado para permitir mais sinais, ainda com filtro
+            if score < 60:
                 continue
 
             # 5) Calcular preços (entry, SL, TP)
