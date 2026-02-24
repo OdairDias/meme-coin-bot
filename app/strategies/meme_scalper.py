@@ -45,8 +45,8 @@ class MemeScalperStrategy:
                 logger.debug(f"Token {asset.get('symbol')} rejeitado: {reason}")
                 continue
 
-            # 2) Buscar OHLCV primeiro (1 chamada Birdeye) — reduz 429
-            ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="5m", limit=50)
+            # 2) Buscar OHLCV (1m = mais candles em pouco tempo; re-scan ajuda)
+            ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="1m", limit=20)
             if not ohlcv_data or not ohlcv_data.get("ohlcv"):
                 logger.debug(f"Sem OHLCV para {token_address}")
                 continue

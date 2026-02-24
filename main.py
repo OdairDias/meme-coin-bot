@@ -54,28 +54,33 @@ async def lifespan(app: FastAPI):
     # 4) Registrar callback do scanner
     async def on_new_token(token_data: dict):
         """Processa novo token do PumpPortal (com delay para Birdeye ter candles)."""
-        # Pré-filtro leve: só descarta market cap muito baixo (regras pesadas na estratégia)
+        # Pré-filtro: market cap mínimo (40 SOL permite mais tokens que 50)
         market_cap = token_data.get("market_cap", 0) or 0
-        if market_cap > 0 and market_cap < 50:
+        min_mc = settings.MIN_MARKET_CAP_SOL
+        if market_cap > 0 and market_cap < min_mc:
             return
 
-        async def process_after_delay():
-            """Aguarda delay para Birdeye ter pelo menos 1-2 candles antes de consultar OHLCV."""
-            delay = settings.BIRDEYE_DELAY_SECONDS
+        async def process_after_delay(is_rescan: bool = False):
+            """Aguarda delay para Birdeye ter candles; re-scan se 0 sinais na 1ª vez."""
+            delay = settings.BIRDEYE_DELAY_SECONDS if not is_rescan else settings.RESCAN_DELAY_SECONDS
             if delay > 0:
                 symbol = token_data.get("symbol", "?")
-                logger.info(f"⏳ Aguardando {delay}s para {symbol} (Birdeye precisa de candles)")
+                msg = f"🔄 Re-analisando {symbol}" if is_rescan else f"⏳ Aguardando {delay}s para {symbol}"
+                logger.info(msg + (f" em {delay}s" if is_rescan else " (Birdeye precisa de candles)"))
                 await asyncio.sleep(delay)
             try:
                 assets = [token_data]
                 signals = await strategy.generate_signals(assets)
                 for signal in signals:
                     await position_manager.open_position(signal)
+                # Re-scan: se 0 sinais e ainda não tentou re-scan, agendar retry
+                if not signals and not is_rescan and settings.RESCAN_DELAY_SECONDS > 0:
+                    asyncio.create_task(process_after_delay(is_rescan=True))
             except Exception as e:
                 logger.error(f"Erro ao processar novo token: {e}")
 
         # Rodar em task separada para não bloquear recebimento de novos tokens
-        asyncio.create_task(process_after_delay())
+        asyncio.create_task(process_after_delay(is_rescan=False))
 
     pump_scanner.register_callback(on_new_token)
 

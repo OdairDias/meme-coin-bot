@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     BIRDEYE_API_KEY: str | None = Field(default=None, env="BIRDEYE_API_KEY")
     # Delay (segundos) após detectar token antes de chamar Birdeye (permite 1-2 candles)
     BIRDEYE_DELAY_SECONDS: int = Field(default=75, env="BIRDEYE_DELAY_SECONDS")
+    # Market cap mínimo (SOL) no pré-filtro — 40 permite mais tokens que 50
+    MIN_MARKET_CAP_SOL: float = Field(default=40.0, env="MIN_MARKET_CAP_SOL")
+    # Re-scan: segundos para re-analisar token que não gerou sinal na 1ª vez (5min = ~6 candles 1m)
+    RESCAN_DELAY_SECONDS: int = Field(default=300, env="RESCAN_DELAY_SECONDS")
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str | None = Field(default=None, env="TELEGRAM_BOT_TOKEN")

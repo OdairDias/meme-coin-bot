@@ -17,8 +17,9 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int = 3) -> tu
     Returns:
         (detectado, metadata)
     """
-    if len(ohlcv) < 10:
-        return False, {"reason": "OHLCV muito curto"}
+    # Mínimo 6 candles para min_steps=2 (range(2, len-2) precisa de 2+ índices)
+    if len(ohlcv) < 6:
+        return False, {"reason": f"OHLCV muito curto: {len(ohlcv)} candles (mín 6)"}
 
     # Extrair closes e highs/lows
     closes = np.array([c["close"] for c in ohlcv])
