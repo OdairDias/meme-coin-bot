@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     RESCAN_DELAY_SECONDS: int = Field(default=90, env="RESCAN_DELAY_SECONDS")
     # Anti-clone: ignorar tokens com mesmo symbol por N segundos (evita spam AGENC x50)
     ANTI_CLONE_SYMBOL_SECONDS: int = Field(default=600, env="ANTI_CLONE_SYMBOL_SECONDS")
+    # Mínimo de candles para análise (4 = entrada no pump inicial)
+    MIN_CANDLES: int = Field(default=4, env="MIN_CANDLES")
+    # Máximo de re-scans por token (1 inicial + N rescans)
+    MAX_RESCAN_ATTEMPTS: int = Field(default=4, env="MAX_RESCAN_ATTEMPTS")
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str | None = Field(default=None, env="TELEGRAM_BOT_TOKEN")

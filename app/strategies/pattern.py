@@ -5,21 +5,50 @@ from typing import List, Dict, Any
 import numpy as np
 from datetime import datetime, timezone
 
+from app.core.config import settings
+
 
 def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int = 3) -> tuple[bool, Dict[str, Any]]:
     """
     Detecta se há padrão de escadinha de alta (staircase to heaven).
+    Com 4-5 candles: usa uptrend simples. Com 6+: usa escadinha completa.
 
     Args:
         ohlcv: lista de candles com keys: close, high, low, timestamp
-        min_steps: número mínimo de degraus para considerar padrão
+        min_steps: número mínimo de degraus para considerar padrão (6+ candles)
 
     Returns:
         (detectado, metadata)
     """
-    # Mínimo 6 candles para min_steps=2 (range(2, len-2) precisa de 2+ índices)
+    min_candles = getattr(settings, "MIN_CANDLES", 4)
+    if len(ohlcv) < min_candles:
+        return False, {"reason": f"OHLCV muito curto: {len(ohlcv)} candles (mín {min_candles})"}
+
+    # Modo rápido (4-5 candles): uptrend simples (preço subindo)
     if len(ohlcv) < 6:
-        return False, {"reason": f"OHLCV muito curto: {len(ohlcv)} candles (mín 6)"}
+        closes = np.array([c["close"] for c in ohlcv])
+        # Exige: close atual > anterior (mínimo de momentum)
+        if len(closes) >= 2 and closes[-1] <= closes[-2]:
+            return False, {"reason": "Preço não subindo (4-5 candles)"}
+        # Opcional: últimos 3 não-descendentes
+        if len(closes) >= 3:
+            last_3 = closes[-3:]
+            if any(last_3[i] > last_3[i + 1] for i in range(len(last_3) - 1)):
+                return False, {"reason": "Correção recente (4-5 candles)"}
+        last_price = float(closes[-1])
+        first_price = float(closes[0])
+        step_percent = ((last_price - first_price) / first_price * 100) if first_price > 0 else 0
+        recent_volumes = [c.get("volume", 0) for c in ohlcv[-5:]]
+        avg_volume = np.mean(recent_volumes) if recent_volumes else 0
+        return True, {
+            "steps_up": 1,
+            "last_price": last_price,
+            "last_trough": float(closes[-2]) if len(closes) >= 2 else first_price,
+            "last_peak": last_price,
+            "step_height_usd": last_price - first_price,
+            "step_percent": step_percent,
+            "avg_volume": avg_volume,
+        }
 
     # Extrair closes e highs/lows
     closes = np.array([c["close"] for c in ohlcv])

@@ -78,27 +78,30 @@ async def lifespan(app: FastAPI):
                     if _symbol_analyzing[k] < cutoff:
                         del _symbol_analyzing[k]
 
-        async def process_after_delay(is_rescan: bool = False):
-            """Aguarda delay para Birdeye ter candles; re-scan se 0 sinais na 1ª vez."""
-            delay = settings.BIRDEYE_DELAY_SECONDS if not is_rescan else settings.RESCAN_DELAY_SECONDS
+        async def process_after_delay(rescan_count: int = 0):
+            """Aguarda delay para Birdeye ter candles; re-scan até MAX_RESCAN_ATTEMPTS vezes."""
+            delay = settings.BIRDEYE_DELAY_SECONDS if rescan_count == 0 else settings.RESCAN_DELAY_SECONDS
             if delay > 0:
                 symbol = token_data.get("symbol", "?")
-                msg = f"🔄 Re-analisando {symbol}" if is_rescan else f"⏳ Aguardando {delay}s para {symbol}"
-                logger.info(msg + (f" em {delay}s" if is_rescan else " (Birdeye precisa de candles)"))
+                if rescan_count == 0:
+                    logger.info(f"⏳ Aguardando {delay}s para {symbol} (Birdeye precisa de candles)")
+                else:
+                    logger.info(f"🔄 Re-analisando {symbol} ({rescan_count}/{settings.MAX_RESCAN_ATTEMPTS}) em {delay}s")
                 await asyncio.sleep(delay)
             try:
                 assets = [token_data]
                 signals = await strategy.generate_signals(assets)
                 for signal in signals:
                     await position_manager.open_position(signal)
-                # Re-scan: se 0 sinais e ainda não tentou re-scan, agendar retry
-                if not signals and not is_rescan and settings.RESCAN_DELAY_SECONDS > 0:
-                    asyncio.create_task(process_after_delay(is_rescan=True))
+                # Re-scan: se 0 sinais e ainda há tentativas, agendar retry
+                max_rescans = settings.MAX_RESCAN_ATTEMPTS
+                if not signals and rescan_count < max_rescans - 1 and settings.RESCAN_DELAY_SECONDS > 0:
+                    asyncio.create_task(process_after_delay(rescan_count=rescan_count + 1))
             except Exception as e:
                 logger.error(f"Erro ao processar novo token: {e}")
 
         # Rodar em task separada para não bloquear recebimento de novos tokens
-        asyncio.create_task(process_after_delay(is_rescan=False))
+        asyncio.create_task(process_after_delay(rescan_count=0))
 
     pump_scanner.register_callback(on_new_token)
 
