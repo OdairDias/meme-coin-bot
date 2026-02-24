@@ -35,9 +35,23 @@ class MemeScalperStrategy:
         signals = []
 
         for asset in assets:
-            token_address = asset["address"]
+            token_address = asset.get("address") or asset.get("mint")
+            if not token_address:
+                continue
 
-            # 1) Filtros iniciais (já aplicados, mas repetir por segurança)
+            # 0) Enriquecer com Birdeye quando possível (volume, liquidez, holders para score)
+            try:
+                info = await self.birdeye.get_token_info(token_address)
+                if info:
+                    asset["volume_24h"] = info.get("volume_24h") or asset.get("volume_24h", 0)
+                    asset["liquidity_usd"] = info.get("liquidity_usd") or asset.get("liquidity_usd", 0)
+                    asset["holders"] = info.get("holders") if info.get("holders") is not None else asset.get("holders", 0)
+                    asset["price_usd"] = info.get("price_usd") or asset.get("price_usd")
+                    asset["market_cap"] = info.get("market_cap") or asset.get("market_cap")
+            except Exception:
+                pass
+
+            # 1) Filtros iniciais (regras afrouxadas; volume/liquidez 0 deixam passar)
             passed, reason = apply_initial_filters(asset)
             if not passed:
                 logger.debug(f"Token {asset.get('symbol')} rejeitado: {reason}")
@@ -51,15 +65,15 @@ class MemeScalperStrategy:
 
             ohlcv = ohlcv_data["ohlcv"]
 
-            # 3) Detectar padrão escadinha
-            detected, pattern_meta = detect_stairs_pattern(ohlcv, min_steps=3)
+            # 3) Detectar padrão escadinha (min_steps=2 aceita mais candidatos)
+            detected, pattern_meta = detect_stairs_pattern(ohlcv, min_steps=2)
             if not detected:
                 continue
 
             # 4) Calcular score simples (pode ser melhorado depois)
             score = self._calculate_score(asset, pattern_meta)
 
-            if score < 70:  # threshold inicial
+            if score < 55:  # threshold afrouxado (era 70) para gerar mais sinais
                 continue
 
             # 5) Calcular preços (entry, SL, TP)

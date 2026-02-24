@@ -59,10 +59,10 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int = 3) -> tu
                 step_height = last_peak - last_trough
                 step_percent = (step_height / last_trough) * 100 if last_trough > 0 else 0
 
-                # Verificar volume crescente nos últimos candles (simples)
+                # Verificar volume nos últimos candles (afrouxado: 50% da média)
                 recent_volumes = [c.get("volume", 0) for c in ohlcv[-5:]]
-                avg_volume = np.mean(recent_volumes)
-                volume_ok = recent_volumes[-1] >= avg_volume * 0.7  # pelo menos 70% da média
+                avg_volume = np.mean(recent_volumes) if recent_volumes else 0
+                volume_ok = avg_volume == 0 or recent_volumes[-1] >= avg_volume * 0.5
 
                 if not volume_ok:
                     return False, {"reason": "Volume decrescendo"}
