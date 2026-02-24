@@ -53,23 +53,29 @@ async def lifespan(app: FastAPI):
 
     # 4) Registrar callback do scanner
     async def on_new_token(token_data: dict):
-        """Processa novo token do PumpPortal."""
-        try:
-            # Pré-filtro leve: só descarta market cap muito baixo (regras pesadas na estratégia)
-            market_cap = token_data.get("market_cap", 0) or 0
-            if market_cap > 0 and market_cap < 50:
-                return
+        """Processa novo token do PumpPortal (com delay para Birdeye ter candles)."""
+        # Pré-filtro leve: só descarta market cap muito baixo (regras pesadas na estratégia)
+        market_cap = token_data.get("market_cap", 0) or 0
+        if market_cap > 0 and market_cap < 50:
+            return
 
-            # Gerar sinal pela estratégia (síncrono, mas vamos rodar async)
-            assets = [token_data]
-            signals = await strategy.generate_signals(assets)
+        async def process_after_delay():
+            """Aguarda delay para Birdeye ter pelo menos 1-2 candles antes de consultar OHLCV."""
+            delay = settings.BIRDEYE_DELAY_SECONDS
+            if delay > 0:
+                symbol = token_data.get("symbol", "?")
+                logger.info(f"⏳ Aguardando {delay}s para {symbol} (Birdeye precisa de candles)")
+                await asyncio.sleep(delay)
+            try:
+                assets = [token_data]
+                signals = await strategy.generate_signals(assets)
+                for signal in signals:
+                    await position_manager.open_position(signal)
+            except Exception as e:
+                logger.error(f"Erro ao processar novo token: {e}")
 
-            for signal in signals:
-                # Validar e abrir posição
-                await position_manager.open_position(signal)
-
-        except Exception as e:
-            logger.error(f"Erro ao processar novo token: {e}")
+        # Rodar em task separada para não bloquear recebimento de novos tokens
+        asyncio.create_task(process_after_delay())
 
     pump_scanner.register_callback(on_new_token)
 

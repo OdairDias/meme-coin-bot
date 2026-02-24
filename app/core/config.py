@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     # APIs
     BIRDEYE_API_KEY: str | None = Field(default=None, env="BIRDEYE_API_KEY")
+    # Delay (segundos) após detectar token antes de chamar Birdeye (permite 1-2 candles)
+    BIRDEYE_DELAY_SECONDS: int = Field(default=75, env="BIRDEYE_DELAY_SECONDS")
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str | None = Field(default=None, env="TELEGRAM_BOT_TOKEN")
