@@ -1,7 +1,9 @@
 """
 Birdeye Scanner — Dados complementares (volume, liquidez, holders)
 Usa endpoints oficiais da API Birdeye: /defi/token_overview e /defi/ohlcv
+Rate limit e retry 429 para evitar bloqueio.
 """
+import asyncio
 import time
 from typing import Dict, Any, Optional
 import httpx
@@ -10,6 +12,12 @@ from app.core.config import settings
 from app.core.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Rate limit: mínimo 1.5s entre requests (evita 429)
+MIN_REQUEST_INTERVAL = 1.5
+# Retry 429: esperar 60s e tentar de novo (1 retry)
+RETRY_429_WAIT_SECONDS = 60
+MAX_RETRIES_429 = 2
 
 
 class BirdeyeScanner:
@@ -20,7 +28,40 @@ class BirdeyeScanner:
 
     def __init__(self):
         self.api_key = settings.BIRDEYE_API_KEY
-        self.client = httpx.AsyncClient(timeout=10.0)
+        self.client = httpx.AsyncClient(timeout=15.0)
+        self._last_request_time = 0.0
+        self._lock = asyncio.Lock()
+
+    async def _rate_limit(self):
+        """Garante intervalo mínimo entre requests."""
+        async with self._lock:
+            elapsed = time.monotonic() - self._last_request_time
+            if elapsed < MIN_REQUEST_INTERVAL:
+                await asyncio.sleep(MIN_REQUEST_INTERVAL - elapsed)
+            self._last_request_time = time.monotonic()
+
+    async def _get_with_retry(self, url: str, params: dict) -> Optional[dict]:
+        """GET com rate limit e retry em 429."""
+        for attempt in range(MAX_RETRIES_429):
+            await self._rate_limit()
+            try:
+                response = await self.client.get(url, headers=self._headers(), params=params)
+                if response.status_code == 429:
+                    if attempt < MAX_RETRIES_429 - 1:
+                        logger.warning(f"Birdeye 429, aguardando {RETRY_429_WAIT_SECONDS}s antes de retry...")
+                        await asyncio.sleep(RETRY_429_WAIT_SECONDS)
+                        continue
+                    logger.warning("Birdeye 429 após retries, pulando request")
+                    return None
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < MAX_RETRIES_429 - 1:
+                    logger.warning(f"Birdeye 429, aguardando {RETRY_429_WAIT_SECONDS}s antes de retry...")
+                    await asyncio.sleep(RETRY_429_WAIT_SECONDS)
+                    continue
+                raise
+        return None
 
     def _headers(self) -> Dict[str, str]:
         """Headers obrigatórios para a API Birdeye (inclui x-chain)."""
@@ -39,9 +80,9 @@ class BirdeyeScanner:
         try:
             url = f"{self.BASE_URL}/defi/token_overview"
             params = {"address": token_address}
-            response = await self.client.get(url, headers=self._headers(), params=params)
-            response.raise_for_status()
-            data = response.json()
+            data = await self._get_with_retry(url, params)
+            if not data:
+                return None
 
             # Resposta pode vir em data ou na raiz
             meta = data.get("data", data)
@@ -104,9 +145,9 @@ class BirdeyeScanner:
                 "time_from": time_from,
                 "time_to": now,
             }
-            response = await self.client.get(url, headers=self._headers(), params=params)
-            response.raise_for_status()
-            data = response.json()
+            data = await self._get_with_retry(url, params)
+            if not data:
+                return None
 
             # Resposta Birdeye: data.items (lista de candles com unixTime, o, h, l, c, v)
             raw = data.get("data", {})

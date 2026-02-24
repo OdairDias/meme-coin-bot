@@ -39,25 +39,13 @@ class MemeScalperStrategy:
             if not token_address:
                 continue
 
-            # 0) Enriquecer com Birdeye quando possível (volume, liquidez, holders para score)
-            try:
-                info = await self.birdeye.get_token_info(token_address)
-                if info:
-                    asset["volume_24h"] = info.get("volume_24h") or asset.get("volume_24h", 0)
-                    asset["liquidity_usd"] = info.get("liquidity_usd") or asset.get("liquidity_usd", 0)
-                    asset["holders"] = info.get("holders") if info.get("holders") is not None else asset.get("holders", 0)
-                    asset["price_usd"] = info.get("price_usd") or asset.get("price_usd")
-                    asset["market_cap"] = info.get("market_cap") or asset.get("market_cap")
-            except Exception:
-                pass
-
             # 1) Filtros iniciais (regras afrouxadas; volume/liquidez 0 deixam passar)
             passed, reason = apply_initial_filters(asset)
             if not passed:
                 logger.debug(f"Token {asset.get('symbol')} rejeitado: {reason}")
                 continue
 
-            # 2) Buscar OHLCV para análise de padrão (usando Birdeye se disponível)
+            # 2) Buscar OHLCV primeiro (1 chamada Birdeye) — reduz 429
             ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="5m", limit=50)
             if not ohlcv_data or not ohlcv_data.get("ohlcv"):
                 logger.debug(f"Sem OHLCV para {token_address}")
@@ -70,13 +58,25 @@ class MemeScalperStrategy:
             if not detected:
                 continue
 
-            # 4) Calcular score simples (pode ser melhorado depois)
+            # 4) Só agora enriquecer com token_overview (volume/holders para score) — evita chamadas desnecessárias
+            try:
+                info = await self.birdeye.get_token_info(token_address)
+                if info:
+                    asset["volume_24h"] = info.get("volume_24h") or asset.get("volume_24h", 0)
+                    asset["liquidity_usd"] = info.get("liquidity_usd") or asset.get("liquidity_usd", 0)
+                    asset["holders"] = info.get("holders") if info.get("holders") is not None else asset.get("holders", 0)
+                    asset["price_usd"] = info.get("price_usd") or asset.get("price_usd")
+                    asset["market_cap"] = info.get("market_cap") or asset.get("market_cap")
+            except Exception:
+                pass
+
+            # 5) Calcular score simples (pode ser melhorado depois)
             score = self._calculate_score(asset, pattern_meta)
 
             if score < 55:  # threshold afrouxado (era 70) para gerar mais sinais
                 continue
 
-            # 5) Calcular preços (entry, SL, TP)
+            # 6) Calcular preços (entry, SL, TP)
             current_price = asset.get("price_usd") or pattern_meta["last_price"]
             if not current_price or current_price <= 0:
                 continue
