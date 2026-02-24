@@ -42,13 +42,13 @@ class MemeScalperStrategy:
             # 1) Filtros iniciais (regras afrouxadas; volume/liquidez 0 deixam passar)
             passed, reason = apply_initial_filters(asset)
             if not passed:
-                logger.debug(f"Token {asset.get('symbol')} rejeitado: {reason}")
+                logger.info(f"❌ {asset.get('symbol')} rejeitado (filtro): {reason}")
                 continue
 
             # 2) Buscar OHLCV (1m = mais candles em pouco tempo; re-scan ajuda)
             ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="1m", limit=20)
             if not ohlcv_data or not ohlcv_data.get("ohlcv"):
-                logger.debug(f"Sem OHLCV para {token_address}")
+                logger.info(f"❌ {asset.get('symbol')} rejeitado: sem OHLCV (Birdeye)")
                 continue
 
             ohlcv = ohlcv_data["ohlcv"]
@@ -56,6 +56,8 @@ class MemeScalperStrategy:
             # 3) Detectar padrão escadinha (min_steps=2 aceita mais candidatos)
             detected, pattern_meta = detect_stairs_pattern(ohlcv, min_steps=2)
             if not detected:
+                reason = pattern_meta.get("reason", "padrão não detectado")
+                logger.info(f"❌ {asset.get('symbol')} rejeitado (pattern): {reason} ({len(ohlcv)} candles)")
                 continue
 
             # 4) Só agora enriquecer com token_overview (volume/holders para score) — evita chamadas desnecessárias
@@ -74,11 +76,13 @@ class MemeScalperStrategy:
             score = self._calculate_score(asset, pattern_meta)
 
             if score < 55:  # threshold afrouxado (era 70) para gerar mais sinais
+                logger.info(f"❌ {asset.get('symbol')} rejeitado (score): {score:.0f} < 55")
                 continue
 
             # 6) Calcular preços (entry, SL, TP)
             current_price = asset.get("price_usd") or pattern_meta["last_price"]
             if not current_price or current_price <= 0:
+                logger.info(f"❌ {asset.get('symbol')} rejeitado: preço inválido")
                 continue
 
             # Position size em USD → quantidade de tokens

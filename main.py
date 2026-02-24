@@ -2,7 +2,7 @@
 MemeCoin Scalper Bot — Main Application
 """
 import asyncio
-import logging
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -21,6 +21,8 @@ from app.monitoring.alerts import TelegramAlerter
 
 logger = setup_logger(__name__)
 
+# Anti-clone: symbol -> timestamp da última análise iniciada
+_symbol_analyzing: dict[str, float] = {}
 
 # Instâncias globais
 pump_scanner: PumpPortalScanner | None = None
@@ -59,6 +61,22 @@ async def lifespan(app: FastAPI):
         min_mc = settings.MIN_MARKET_CAP_SOL
         if market_cap > 0 and market_cap < min_mc:
             return
+
+        # Anti-clone: ignorar tokens com mesmo symbol já em análise (evita spam AGENC x50)
+        symbol = (token_data.get("symbol") or "?").strip().upper()
+        if symbol and symbol != "?":
+            now = time.time()
+            window = settings.ANTI_CLONE_SYMBOL_SECONDS
+            if symbol in _symbol_analyzing and (now - _symbol_analyzing[symbol]) < window:
+                logger.debug(f"⏭️ Ignorando clone {symbol} (já em análise há {int(now - _symbol_analyzing[symbol])}s)")
+                return
+            _symbol_analyzing[symbol] = now
+            # Limpar entradas antigas quando cache cresce
+            if len(_symbol_analyzing) > 500:
+                cutoff = now - window
+                for k in list(_symbol_analyzing.keys()):
+                    if _symbol_analyzing[k] < cutoff:
+                        del _symbol_analyzing[k]
 
         async def process_after_delay(is_rescan: bool = False):
             """Aguarda delay para Birdeye ter candles; re-scan se 0 sinais na 1ª vez."""
