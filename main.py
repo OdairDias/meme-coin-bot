@@ -84,7 +84,7 @@ async def lifespan(app: FastAPI):
             if delay > 0:
                 symbol = token_data.get("symbol", "?")
                 if rescan_count == 0:
-                    logger.info(f"⏳ Aguardando {delay}s para {symbol} (Birdeye precisa de candles)")
+                    logger.info(f"⏳ Aguardando {delay}s para {symbol} (OHLCV)")
                 else:
                     logger.info(f"🔄 Re-analisando {symbol} ({rescan_count}/{settings.MAX_RESCAN_ATTEMPTS}) em {delay}s")
                 await asyncio.sleep(delay)

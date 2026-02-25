@@ -1,7 +1,7 @@
 """
 Birdeye Scanner — Dados complementares (volume, liquidez, holders)
 Usa endpoints oficiais da API Birdeye: /defi/token_overview e /defi/ohlcv
-Rate limit e retry 429 para evitar bloqueio.
+OHLCV: Bitquery quando BITQUERY_API_KEY configurada (evita limite Birdeye)
 """
 import asyncio
 import time
@@ -31,6 +31,10 @@ class BirdeyeScanner:
         self.client = httpx.AsyncClient(timeout=15.0)
         self._last_request_time = 0.0
         self._lock = asyncio.Lock()
+        self._bitquery = None
+        if settings.BITQUERY_API_KEY:
+            from app.scanners.bitquery import BitqueryScanner
+            self._bitquery = BitqueryScanner()
 
     async def _rate_limit(self):
         """Garante intervalo mínimo entre requests."""
@@ -139,7 +143,9 @@ class BirdeyeScanner:
             return None
 
     async def get_ohlcv(self, token_address: str, interval: str = "5m", limit: int = 50) -> Optional[Dict[str, Any]]:
-        """Obtém dados OHLCV via /defi/ohlcv (type, time_from, time_to)."""
+        """Obtém OHLCV: Bitquery (se configurado) ou Birdeye."""
+        if self._bitquery:
+            return await self._bitquery.get_ohlcv(token_address, interval=interval, limit=limit)
         if not self.api_key:
             return None
 
@@ -195,4 +201,6 @@ class BirdeyeScanner:
 
     async def close(self):
         """Fecha cliente HTTP."""
+        if self._bitquery:
+            await self._bitquery.close()
         await self.client.aclose()

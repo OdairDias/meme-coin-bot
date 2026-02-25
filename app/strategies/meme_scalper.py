@@ -45,10 +45,10 @@ class MemeScalperStrategy:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado (filtro): {reason}")
                 continue
 
-            # 2) Buscar OHLCV (1m, janela 10min para tokens novos — evita 400 Birdeye)
+            # 2) Buscar OHLCV (1m, Bitquery ou Birdeye)
             ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="1m", limit=10)
             if not ohlcv_data or not ohlcv_data.get("ohlcv"):
-                logger.info(f"❌ {asset.get('symbol')} rejeitado: sem OHLCV (Birdeye)")
+                logger.info(f"❌ {asset.get('symbol')} rejeitado: sem OHLCV")
                 continue
 
             ohlcv = ohlcv_data["ohlcv"]
