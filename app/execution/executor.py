@@ -97,8 +97,11 @@ class Executor:
         slippage: float,
         priority_fee: float,
         pool: str,
-    ) -> bool:
-        """Envia ordem ao PumpPortal e trata resposta (JSON Lightning ou bytes trade-local)."""
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Envia ordem ao PumpPortal e trata resposta.
+        Retorna (success, error_message).
+        """
         payload = self._payload(
             action=action,
             mint=token_address,
@@ -108,37 +111,60 @@ class Executor:
             priority_fee=priority_fee,
             pool=pool,
         )
-        # trade-local na doc usa form data; Lightning pode usar JSON
-        if _is_trade_local():
-            form = {k: str(v) for k, v in payload.items()}
-            response = await self.client.post(settings.PUMP_PORTAL_API, data=form)
-        else:
-            response = await self.client.post(
-                settings.PUMP_PORTAL_API,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-        response.raise_for_status()
+        try:
+            if _is_trade_local():
+                form = {k: str(v) for k, v in payload.items()}
+                response = await self.client.post(settings.PUMP_PORTAL_API, data=form)
+            else:
+                response = await self.client.post(
+                    settings.PUMP_PORTAL_API,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
 
-        content_type = (response.headers.get("content-type") or "").lower()
-        if "application/json" in content_type:
-            result = response.json()
-            if result.get("success"):
-                tx_id = result.get("txid", "N/A")
-                logger.info(f"✅ {action.upper()} executada: {token_address} tx={tx_id}")
-                return True
-            logger.error(f"❌ {action.upper()} falhou: {result.get('error', 'Unknown')}")
-            return False
+            content_type = (response.headers.get("content-type") or "").lower()
 
-        if _is_trade_local() and response.content:
-            txid = await self._sign_and_send_tx(response.content)
-            if txid:
-                logger.info(f"✅ {action.upper()} executada: {token_address} tx={txid}")
-                return True
-            return False
+            # Erro HTTP (ex: 400 BondingCurveComplete)
+            if response.status_code >= 400:
+                err_msg = "Unknown"
+                try:
+                    if "application/json" in content_type:
+                        data = response.json()
+                        err_msg = data.get("error", data.get("message", str(response.text)))[:200]
+                    else:
+                        err_msg = response.text[:200] if response.text else str(response.status_code)
+                except Exception:
+                    pass
+                logger.error(f"❌ {action.upper()} HTTP {response.status_code}: {err_msg}")
+                return False, err_msg
+
+            if "application/json" in content_type:
+                result = response.json()
+                if result.get("success"):
+                    tx_id = result.get("txid", "N/A")
+                    logger.info(f"✅ {action.upper()} executada: {token_address} tx={tx_id}")
+                    return True, None
+                err = result.get("error", "Unknown")
+                logger.error(f"❌ {action.upper()} falhou: {err}")
+                return False, str(err)
+
+            if _is_trade_local() and response.content:
+                txid = await self._sign_and_send_tx(response.content)
+                if txid:
+                    logger.info(f"✅ {action.upper()} executada: {token_address} tx={txid}")
+                    return True, None
+                return False, "Falha ao assinar/enviar tx"
+
+        except httpx.HTTPStatusError as e:
+            err_msg = str(e.response.text)[:200] if e.response else str(e)
+            logger.error(f"❌ {action.upper()} HTTP error: {err_msg}")
+            return False, err_msg
+        except Exception as e:
+            logger.error(f"❌ {action.upper()} erro: {e}", exc_info=True)
+            return False, str(e)
 
         logger.error("Resposta inesperada do PumpPortal (nem JSON nem tx bytes)")
-        return False
+        return False, "Resposta inesperada"
 
     async def buy(
         self,
@@ -159,7 +185,7 @@ class Executor:
             return True
 
         try:
-            return await self._execute(
+            success, _ = await self._execute(
                 action="buy",
                 token_address=token_address,
                 amount=amount,
@@ -168,9 +194,23 @@ class Executor:
                 priority_fee=priority_fee,
                 pool=pool,
             )
+            return success
         except Exception as e:
             logger.error(f"Erro ao executar COMPRA: {e}", exc_info=True)
             return False
+
+    def _is_bonding_curve_error(self, err: Optional[str]) -> bool:
+        """Detecta se o erro indica que o token migrou para Raydium (bonding curve completa)."""
+        if not err:
+            return False
+        err_lower = err.lower()
+        return (
+            "bondingcurve" in err_lower
+            or "bonding curve" in err_lower
+            or "curve complete" in err_lower
+            or "migrated" in err_lower
+            or "raydium" in err_lower
+        )
 
     async def sell(
         self,
@@ -183,6 +223,7 @@ class Executor:
     ) -> bool:
         """
         Vende tokens via PumpPortal.
+        Se falhar com BondingCurveComplete (token migrou para Raydium), retenta com pool=raydium.
         amount: quantidade em tokens ou "100%" para vender tudo.
         """
         if settings.DRY_RUN:
@@ -190,7 +231,7 @@ class Executor:
             return True
 
         try:
-            return await self._execute(
+            success, error = await self._execute(
                 action="sell",
                 token_address=token_address,
                 amount=amount,
@@ -199,6 +240,25 @@ class Executor:
                 priority_fee=priority_fee,
                 pool=pool,
             )
+            if success:
+                return True
+            # Retry na Raydium se token migrou (bonding curve completa) ou erro sugere migração
+            if pool != "raydium":
+                if self._is_bonding_curve_error(error):
+                    logger.info(f"🔄 Token migrou para Raydium (detectado), tentando pool=raydium")
+                else:
+                    logger.info(f"🔄 Venda falhou, tentando pool=raydium (fallback)")
+                success2, _ = await self._execute(
+                    action="sell",
+                    token_address=token_address,
+                    amount=amount,
+                    denominated_in_sol=denominated_in_sol,
+                    slippage=slippage,
+                    priority_fee=priority_fee,
+                    pool="raydium",
+                )
+                return success2
+            return False
         except Exception as e:
             logger.error(f"Erro ao executar VENDA: {e}", exc_info=True)
             return False
