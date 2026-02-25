@@ -41,7 +41,7 @@ class BirdeyeScanner:
             self._last_request_time = time.monotonic()
 
     async def _get_with_retry(self, url: str, params: dict) -> Optional[dict]:
-        """GET com rate limit e retry em 429."""
+        """GET com rate limit, retry em 429, e tratamento de 400."""
         for attempt in range(MAX_RETRIES_429):
             await self._rate_limit()
             try:
@@ -53,9 +53,25 @@ class BirdeyeScanner:
                         continue
                     logger.warning("Birdeye 429 após retries, pulando request")
                     return None
+                if response.status_code == 400:
+                    try:
+                        body = response.json()
+                        err = body.get("message", body.get("error", body.get("detail", str(body))))[:300]
+                    except Exception:
+                        err = response.text[:300] if response.text else "Bad Request"
+                    logger.warning(f"Birdeye 400: {err}")
+                    return None
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
+                if e.response.status_code == 400:
+                    try:
+                        body = e.response.json()
+                        err = body.get("message", body.get("error", str(body)))[:300]
+                    except Exception:
+                        err = e.response.text[:300] if e.response.text else "Bad Request"
+                    logger.warning(f"Birdeye 400: {err}")
+                    return None
                 if e.response.status_code == 429 and attempt < MAX_RETRIES_429 - 1:
                     logger.warning(f"Birdeye 429, aguardando {RETRY_429_WAIT_SECONDS}s antes de retry...")
                     await asyncio.sleep(RETRY_429_WAIT_SECONDS)
@@ -134,9 +150,12 @@ class BirdeyeScanner:
 
             # Calcular time_from e time_to (API usa timestamps em segundos)
             now = int(time.time())
-            # 50 candles de 5m = 250 min; 1h = 60 min; 1d = 1440 min
             mins_per_candle = {"1m": 1, "5m": 5, "1h": 60, "1d": 1440}.get(ohlcv_type, 5)
-            time_from = now - (limit * mins_per_candle * 60)
+            window_minutes = limit * mins_per_candle
+            # Janela máxima 10 min para tokens recém-nascidos (evita 400 por time_from antes do pool)
+            if ohlcv_type == "1m" and window_minutes > 10:
+                window_minutes = 10
+            time_from = now - (window_minutes * 60)
 
             url = f"{self.BASE_URL}/defi/ohlcv"
             params = {
