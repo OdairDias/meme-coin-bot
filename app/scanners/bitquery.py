@@ -61,7 +61,7 @@ class BitqueryScanner:
             interval_min = 1 if interval in ("1m", "1") else 5
 
             query = """
-            query ($mint: String!, $since: ISO8601DateTime!, $till: ISO8601DateTime!, $limit: Int!) {
+            query ($mint: String!, $since: String!, $till: String!, $limit: Int!) {
               Solana(dataset: combined) {
                 DEXTradeByTokens(
                   orderBy: { descendingByField: "Block_Timefield" }
