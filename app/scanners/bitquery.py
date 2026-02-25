@@ -53,15 +53,16 @@ class BitqueryScanner:
             await self._rate_limit()
 
             # Janela: últimos 15 min (tokens novos)
+            # Bitquery DateTime: RFC 3339 com milissegundos (ex: 2025-02-25T15:30:00.000Z)
             now = datetime.now(timezone.utc)
-            since = (now - timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            till = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            since = (now - timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            till = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
             # Intervalo: 1m ou 5m
             interval_min = 1 if interval in ("1m", "1") else 5
 
             query = """
-            query ($mint: String!, $since: String!, $till: String!, $limit: Int!) {
+            query ($mint: String!, $since: DateTime!, $till: DateTime!, $limit: Int!) {
               Solana(dataset: combined) {
                 DEXTradeByTokens(
                   orderBy: { descendingByField: "Block_Timefield" }
