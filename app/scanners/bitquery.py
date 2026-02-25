@@ -15,6 +15,8 @@ logger = setup_logger(__name__)
 
 # SOL mint (quote currency)
 SOL_MINT = "So11111111111111111111111111111111111111112"
+# Pump.fun program address (Solana)
+PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 BITQUERY_GRAPHQL = "https://streaming.bitquery.io/graphql"
 MIN_REQUEST_INTERVAL = 1.0  # Bitquery free tier: evitar spam
 
@@ -61,6 +63,7 @@ class BitqueryScanner:
             # Intervalo: 1m ou 5m
             interval_min = 1 if interval in ("1m", "1") else 5
 
+            # Query 1: ProgramAddress Pump.fun (mais específico que ProtocolName)
             query = """
             query ($mint: String!, $since: DateTime!, $till: DateTime!, $limit: Int!) {
               Solana(dataset: combined) {
@@ -68,7 +71,7 @@ class BitqueryScanner:
                   orderBy: { descendingByField: "Block_Timefield" }
                   where: {
                     Trade: {
-                      Dex: { ProtocolName: { in: ["pump", "pump_amm"] } }
+                      Dex: { ProgramAddress: { is: "%s" } }
                       Currency: { MintAddress: { is: $mint } }
                       Side: { Currency: { MintAddress: { is: "So11111111111111111111111111111111111111112" } } }
                     }
@@ -90,6 +93,7 @@ class BitqueryScanner:
               }
             }
             """ % (
+                PUMP_FUN_PROGRAM,
                 interval_min,
             )
 
@@ -116,14 +120,100 @@ class BitqueryScanner:
 
             data = response.json()
             errors = data.get("errors", [])
-            if errors:
-                err_msg = str(errors[0]) if errors else "Unknown"
-                logger.warning(f"Bitquery GraphQL errors: {err_msg[:300]}")
-                return None
-
             raw = data.get("data", {}).get("Solana", {}).get("DEXTradeByTokens", [])
+
+            # Se erro (ex: ProgramAddress inválido), tentar fallback sem filtro DEX
+            if errors and not raw:
+                err_msg = str(errors[0]) if errors else "Unknown"
+                logger.debug(f"Bitquery query1 erro: {err_msg[:200]}, tentando fallback...")
+                query_fb = """
+                query ($mint: String!, $since: DateTime!, $till: DateTime!, $limit: Int!) {
+                  Solana(dataset: combined) {
+                    DEXTradeByTokens(
+                      orderBy: { descendingByField: "Block_Timefield" }
+                      where: {
+                        Trade: {
+                          Currency: { MintAddress: { is: $mint } }
+                          Side: { Currency: { MintAddress: { is: "So11111111111111111111111111111111111111112" } } }
+                        }
+                        Block: { Time: { since: $since, till: $till } }
+                      }
+                      limit: { count: $limit }
+                    ) {
+                      Block { Timefield: Time(interval: { in: minutes, count: %d }) }
+                      volume: sum(of: Trade_Amount)
+                      Trade {
+                        high: Price(maximum: Trade_Price)
+                        low: Price(minimum: Trade_Price)
+                        open: Price(minimum: Block_Slot)
+                        close: Price(maximum: Block_Slot)
+                      }
+                    }
+                  }
+                }
+                """ % interval_min
+                await self._rate_limit()
+                resp2 = await self.client.post(
+                    BITQUERY_GRAPHQL,
+                    json={"query": query_fb, "variables": variables},
+                    headers=self._headers(),
+                )
+                if resp2.status_code < 400:
+                    data2 = resp2.json()
+                    if not data2.get("errors"):
+                        raw = data2.get("data", {}).get("Solana", {}).get("DEXTradeByTokens", [])
+                else:
+                    logger.warning(f"Bitquery GraphQL errors: {err_msg[:300]}")
+                    return None
+            elif errors and raw:
+                logger.warning(f"Bitquery GraphQL errors (parcial): {str(errors[0])[:200]}")
             if not raw:
-                logger.debug(f"Bitquery OHLCV vazio para {token_address[:12]}...")
+                # Fallback: sem filtro DEX — qualquer trade do mint vs SOL (Pump, Raydium, etc.)
+                logger.debug(f"Bitquery vazio com ProgramAddress, tentando sem filtro DEX...")
+                query_fallback = """
+                query ($mint: String!, $since: DateTime!, $till: DateTime!, $limit: Int!) {
+                  Solana(dataset: combined) {
+                    DEXTradeByTokens(
+                      orderBy: { descendingByField: "Block_Timefield" }
+                      where: {
+                        Trade: {
+                          Currency: { MintAddress: { is: $mint } }
+                          Side: { Currency: { MintAddress: { is: "So11111111111111111111111111111111111111112" } } }
+                        }
+                        Block: { Time: { since: $since, till: $till } }
+                      }
+                      limit: { count: $limit }
+                    ) {
+                      Block {
+                        Timefield: Time(interval: { in: minutes, count: %d })
+                      }
+                      volume: sum(of: Trade_Amount)
+                      Trade {
+                        high: Price(maximum: Trade_Price)
+                        low: Price(minimum: Trade_Price)
+                        open: Price(minimum: Block_Slot)
+                        close: Price(maximum: Block_Slot)
+                      }
+                    }
+                  }
+                }
+                """ % interval_min
+                await self._rate_limit()
+                resp2 = await self.client.post(
+                    BITQUERY_GRAPHQL,
+                    json={"query": query_fallback, "variables": variables},
+                    headers=self._headers(),
+                )
+                if resp2.status_code < 400:
+                    data2 = resp2.json()
+                    if not data2.get("errors"):
+                        raw = data2.get("data", {}).get("Solana", {}).get("DEXTradeByTokens", [])
+                        if raw:
+                            logger.info(f"Bitquery fallback (sem DEX) retornou {len(raw)} candles para {token_address[:12]}...")
+            if not raw:
+                logger.info(
+                    f"Bitquery OHLCV vazio para {token_address[:12]}... | since={since} till={till}"
+                )
                 return {"address": token_address, "ohlcv": []}
 
             def _to_float(v) -> float:
