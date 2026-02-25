@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
     # 4) Registrar callback do scanner
     async def on_new_token(token_data: dict):
         """Processa novo token do PumpPortal (com delay para Birdeye ter candles)."""
-        # Pré-filtro: market cap mínimo (40 SOL permite mais tokens que 50)
+        # Pré-filtro: market cap mínimo (60 SOL = indexação mais rápida na Bitquery)
         market_cap = token_data.get("market_cap", 0) or 0
         min_mc = settings.MIN_MARKET_CAP_SOL
         if market_cap > 0 and market_cap < min_mc:
