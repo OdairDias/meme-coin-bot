@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     MIN_CANDLES: int = Field(default=4, env="MIN_CANDLES")
     # Máximo de re-scans por token (1 inicial + N rescans)
     MAX_RESCAN_ATTEMPTS: int = Field(default=4, env="MAX_RESCAN_ATTEMPTS")
+    # Padrão: picos/valles mínimos (1 = mais permissivo, 2 = conservador)
+    MIN_PATTERN_STEPS: int = Field(default=1, env="MIN_PATTERN_STEPS")
+    # Volume: último candle >= X%% da média (0.3 = 30%%, memecoins volume caótico)
+    PATTERN_VOLUME_MIN_RATIO: float = Field(default=0.3, env="PATTERN_VOLUME_MIN_RATIO")
+    # Score mínimo para gerar sinal (50 = mais entradas)
+    MIN_SCORE: float = Field(default=50.0, env="MIN_SCORE")
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str | None = Field(default=None, env="TELEGRAM_BOT_TOKEN")

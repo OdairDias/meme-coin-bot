@@ -53,8 +53,8 @@ class MemeScalperStrategy:
 
             ohlcv = ohlcv_data["ohlcv"]
 
-            # 3) Detectar padrão escadinha (min_steps=2 aceita mais candidatos)
-            detected, pattern_meta = detect_stairs_pattern(ohlcv, min_steps=2)
+            # 3) Detectar padrão escadinha (min_steps via config, default 1)
+            detected, pattern_meta = detect_stairs_pattern(ohlcv)
             if not detected:
                 reason = pattern_meta.get("reason", "padrão não detectado")
                 logger.info(f"❌ {asset.get('symbol')} rejeitado (pattern): {reason} ({len(ohlcv)} candles)")
@@ -75,8 +75,9 @@ class MemeScalperStrategy:
             # 5) Calcular score simples (pode ser melhorado depois)
             score = self._calculate_score(asset, pattern_meta)
 
-            if score < 55:  # threshold afrouxado (era 70) para gerar mais sinais
-                logger.info(f"❌ {asset.get('symbol')} rejeitado (score): {score:.0f} < 55")
+            min_score = getattr(settings, "MIN_SCORE", 50.0)
+            if score < min_score:
+                logger.info(f"❌ {asset.get('symbol')} rejeitado (score): {score:.0f} < {min_score:.0f}")
                 continue
 
             # 6) Calcular preços (entry, SL, TP)

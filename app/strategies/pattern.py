@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from app.core.config import settings
 
 
-def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int = 3) -> tuple[bool, Dict[str, Any]]:
+def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int | None = None) -> tuple[bool, Dict[str, Any]]:
     """
     Detecta se há padrão de escadinha de alta (staircase to heaven).
     Com 4-5 candles: usa uptrend simples. Com 6+: usa escadinha completa.
@@ -21,6 +21,7 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int = 3) -> tu
         (detectado, metadata)
     """
     min_candles = getattr(settings, "MIN_CANDLES", 4)
+    min_steps = min_steps if min_steps is not None else getattr(settings, "MIN_PATTERN_STEPS", 1)
     if len(ohlcv) < min_candles:
         return False, {"reason": f"OHLCV muito curto: {len(ohlcv)} candles (mín {min_candles})"}
 
@@ -71,15 +72,18 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int = 3) -> tu
     if len(high_peaks) < min_steps or len(low_troughs) < min_steps:
         return False, {"reason": f"Picos/valles insuficientes: {len(high_peaks)}/{len(low_troughs)}"}
 
-    # Verificar se últimos N picos são ascendentes
-    recent_peaks = high_peaks[-min_steps:]
+    # Verificar se últimos N picos são ascendentes (N = min_steps ou quantos temos)
+    steps_use = min(min_steps, len(high_peaks), len(low_troughs))
+    if steps_use < 1:
+        steps_use = 1
+    recent_peaks = high_peaks[-steps_use:]
     peak_prices = [p[1] for p in recent_peaks]
-    if all(peak_prices[i] < peak_prices[i+1] for i in range(len(peak_prices)-1)):
+    if len(peak_prices) >= 1 and (len(peak_prices) == 1 or all(peak_prices[i] < peak_prices[i+1] for i in range(len(peak_prices)-1))):
         # Últimos vales também ascendentes?
-        recent_troughs = low_troughs[-min_steps:]
-        if len(recent_troughs) >= min_steps:
+        recent_troughs = low_troughs[-steps_use:]
+        if len(recent_troughs) >= 1:
             trough_prices = [t[1] for t in recent_troughs]
-            if all(trough_prices[i] < trough_prices[i+1] for i in range(len(trough_prices)-1)):
+            if len(trough_prices) == 1 or all(trough_prices[i] < trough_prices[i+1] for i in range(len(trough_prices)-1)):
                 # Padrão válido!
                 last_price = closes[-1]
                 last_peak = peak_prices[-1]
@@ -89,10 +93,11 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int = 3) -> tu
                 step_height = last_peak - last_trough
                 step_percent = (step_height / last_trough) * 100 if last_trough > 0 else 0
 
-                # Verificar volume nos últimos candles (afrouxado: 50% da média)
+                # Verificar volume (configurável; memecoins = volume caótico)
+                vol_ratio = getattr(settings, "PATTERN_VOLUME_MIN_RATIO", 0.3)
                 recent_volumes = [c.get("volume", 0) for c in ohlcv[-5:]]
                 avg_volume = np.mean(recent_volumes) if recent_volumes else 0
-                volume_ok = avg_volume == 0 or recent_volumes[-1] >= avg_volume * 0.5
+                volume_ok = avg_volume == 0 or recent_volumes[-1] >= avg_volume * vol_ratio
 
                 if not volume_ok:
                     return False, {"reason": "Volume decrescendo"}
