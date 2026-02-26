@@ -11,7 +11,7 @@ from app.core.config import settings
 def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int | None = None) -> tuple[bool, Dict[str, Any]]:
     """
     Detecta se há padrão de escadinha de alta (staircase to heaven).
-    Com 4-5 candles: usa uptrend simples. Com 6+: usa escadinha completa.
+    Com 3-5 candles: usa uptrend simples. Com 6+: usa escadinha completa.
 
     Args:
         ohlcv: lista de candles com keys: close, high, low, timestamp
@@ -25,17 +25,18 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int | None = N
     if len(ohlcv) < min_candles:
         return False, {"reason": f"OHLCV muito curto: {len(ohlcv)} candles (mín {min_candles})"}
 
-    # Modo rápido (4-5 candles): uptrend simples (preço subindo)
+    # Modo rápido (3-5 candles): uptrend simples (preço subindo)
     if len(ohlcv) < 6:
         closes = np.array([c["close"] for c in ohlcv])
         # Exige: close atual > anterior (mínimo de momentum)
         if len(closes) >= 2 and closes[-1] <= closes[-2]:
             return False, {"reason": "Preço não subindo (4-5 candles)"}
         # Opcional: últimos 3 não-descendentes
+        # Com 3+ candles: rejeitar só se queda clara (evita ser sensível demais)
         if len(closes) >= 3:
-            last_3 = closes[-3:]
-            if any(last_3[i] > last_3[i + 1] for i in range(len(last_3) - 1)):
-                return False, {"reason": "Correção recente (4-5 candles)"}
+            last_n = closes[-3:]
+            if any(last_n[i] > last_n[i + 1] for i in range(len(last_n) - 1)):
+                return False, {"reason": "Correção recente (3-5 candles)"}
         last_price = float(closes[-1])
         first_price = float(closes[0])
         step_percent = ((last_price - first_price) / first_price * 100) if first_price > 0 else 0
@@ -93,14 +94,15 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int | None = N
                 step_height = last_peak - last_trough
                 step_percent = (step_height / last_trough) * 100 if last_trough > 0 else 0
 
-                # Verificar volume (configurável; memecoins = volume caótico)
-                vol_ratio = getattr(settings, "PATTERN_VOLUME_MIN_RATIO", 0.3)
+                # Verificar volume (pode ser desativado — memecoins = volume caótico)
                 recent_volumes = [c.get("volume", 0) for c in ohlcv[-5:]]
                 avg_volume = np.mean(recent_volumes) if recent_volumes else 0
-                volume_ok = avg_volume == 0 or recent_volumes[-1] >= avg_volume * vol_ratio
-
-                if not volume_ok:
-                    return False, {"reason": "Volume decrescendo"}
+                skip_vol = getattr(settings, "PATTERN_SKIP_VOLUME_CHECK", False)
+                if not skip_vol:
+                    vol_ratio = getattr(settings, "PATTERN_VOLUME_MIN_RATIO", 0.2)
+                    volume_ok = avg_volume == 0 or recent_volumes[-1] >= avg_volume * vol_ratio
+                    if not volume_ok:
+                        return False, {"reason": "Volume decrescendo"}
 
                 return True, {
                     "steps_up": min_steps,
