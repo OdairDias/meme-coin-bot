@@ -1,5 +1,6 @@
 """
 Estratégia principal de scalper para memecoins
+Dados: OHLCV (Bitquery), preço SOL (Jupiter), volume/liquidez (DexScreener ou Bitquery)
 """
 import asyncio
 import logging
@@ -11,6 +12,8 @@ from app.core.logger import setup_logger
 from app.strategies.filters import apply_initial_filters
 from app.strategies.pattern import detect_stairs_pattern
 from app.scanners.birdeye import BirdeyeScanner
+from app.scanners.jupiter import get_sol_price_usd
+from app.scanners import dexscreener
 
 logger = setup_logger(__name__)
 
@@ -22,6 +25,7 @@ class MemeScalperStrategy:
         self.birdeye = birdeye
         self.logger = logger
         self._recent_tokens: Dict[str, datetime] = {}  # cache de tokens vistos
+        self._sol_price_cache: float = 0.0
 
     async def scan_assets(self) -> List[Dict[str, Any]]:
         """
@@ -60,17 +64,45 @@ class MemeScalperStrategy:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado (pattern): {reason} ({len(ohlcv)} candles)")
                 continue
 
-            # 4) Só agora enriquecer com token_overview (volume/holders para score) — evita chamadas desnecessárias
-            try:
-                info = await self.birdeye.get_token_info(token_address)
-                if info:
-                    asset["volume_24h"] = info.get("volume_24h") or asset.get("volume_24h", 0)
-                    asset["liquidity_usd"] = info.get("liquidity_usd") or asset.get("liquidity_usd", 0)
-                    asset["holders"] = info.get("holders") if info.get("holders") is not None else asset.get("holders", 0)
-                    asset["price_usd"] = info.get("price_usd") or asset.get("price_usd")
-                    asset["market_cap"] = info.get("market_cap") or asset.get("market_cap")
-            except Exception:
-                pass
+            # 4) Enriquecer para score: marketCapSol*SOL, volume Bitquery, DexScreener (fallback)
+            sol_price = await get_sol_price_usd()
+            if sol_price and sol_price > 0:
+                self._sol_price_cache = sol_price
+            else:
+                sol_price = self._sol_price_cache or 1.0  # fallback conservador
+
+            # Market cap USD = marketCapSol (PumpPortal) * preço SOL
+            market_cap_sol = asset.get("market_cap", 0) or 0
+            if market_cap_sol > 0:
+                asset["market_cap"] = market_cap_sol * sol_price
+
+            # Volume USD: soma dos candles Bitquery (volume*close = SOL, *sol_price = USD)
+            volume_sol = sum(
+                (c.get("volume", 0) or 0) * (c.get("close", 0) or c.get("high", 0) or 0)
+                for c in ohlcv
+            )
+            volume_usd = volume_sol * sol_price
+            if volume_usd > 0:
+                asset["volume_24h"] = volume_usd
+
+            # DexScreener: volume/liquidez quando Bitquery volume baixo ou market_cap ausente (createEventNotification)
+            if (asset.get("volume_24h") or 0) < 100 or (asset.get("market_cap") or 0) <= 0:
+                try:
+                    info = await dexscreener.get_token_info(token_address)
+                    if info:
+                        asset["volume_24h"] = info.get("volume_24h") or asset.get("volume_24h", 0)
+                        asset["liquidity_usd"] = info.get("liquidity_usd") or asset.get("liquidity_usd", 0)
+                        asset["price_usd"] = info.get("price_usd") or asset.get("price_usd")
+                        if info.get("market_cap"):
+                            asset["market_cap"] = info.get("market_cap")
+                except Exception:
+                    pass
+
+            # Preço USD: pattern last_price (SOL) * sol_price; ou DexScreener se já chamamos
+            last_price_sol = pattern_meta.get("last_price", 0) or 0
+            if last_price_sol > 0 and not asset.get("price_usd"):
+                asset["price_usd"] = last_price_sol * sol_price
+            # holders: manter do asset (PumpPortal) ou 0
 
             # 5) Calcular score simples (pode ser melhorado depois)
             score = self._calculate_score(asset, pattern_meta)
@@ -80,8 +112,10 @@ class MemeScalperStrategy:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado (score): {score:.0f} < {min_score:.0f}")
                 continue
 
-            # 6) Calcular preços (entry, SL, TP)
-            current_price = asset.get("price_usd") or pattern_meta["last_price"]
+            # 6) Calcular preços (entry, SL, TP) — sempre em USD
+            current_price = asset.get("price_usd")
+            if not current_price or current_price <= 0:
+                current_price = (pattern_meta.get("last_price", 0) or 0) * sol_price
             if not current_price or current_price <= 0:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado: preço inválido")
                 continue

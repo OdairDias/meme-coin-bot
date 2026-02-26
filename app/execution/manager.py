@@ -156,7 +156,7 @@ class PositionManager:
             return False
 
     async def _monitor_loop(self):
-        """Loop que monitora preços (Birdeye) e verifica SL/TP/timeout."""
+        """Loop que monitora preços (Jupiter) e verifica SL/TP/timeout."""
         logger.info("Iniciando monitoramento de posições...")
         while self.running:
             try:

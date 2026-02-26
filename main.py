@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.logger import setup_logger
 from app.scanners.pump_portal import PumpPortalScanner
 from app.scanners.birdeye import BirdeyeScanner
+from app.scanners.jupiter import JupiterPriceFetcher
 from app.strategies.meme_scalper import MemeScalperStrategy
 from app.execution.executor import Executor
 from app.execution.risk import MemeRiskManager
@@ -105,8 +106,9 @@ async def lifespan(app: FastAPI):
 
     pump_scanner.register_callback(on_new_token)
 
-    # 5) Inicializar PositionManager (Birdeye como price feed para SL/TP; Telegram para alertas)
-    position_manager = PositionManager(executor, risk_manager, price_fetcher=birdeye, alerter=alerter)
+    # 5) Inicializar PositionManager (Jupiter para preço SL/TP — gratuito, sem limites; Telegram para alertas)
+    jupiter_price = JupiterPriceFetcher()
+    position_manager = PositionManager(executor, risk_manager, price_fetcher=jupiter_price, alerter=alerter)
 
     # 6) Iniciar serviços em background
     await pump_scanner.connect()
