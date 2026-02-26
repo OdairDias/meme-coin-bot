@@ -59,35 +59,40 @@ class PositionManager:
             logger.warning(f"❌ Sinal rejeitado: {reasons}")
             return False
 
-        # Executar compra (amount em tokens conforme doc PumpPortal: denominatedInSol=false)
+        # Executar compra: SOL (recomendado) ou tokens
+        buy_in_sol = signal.get("buy_in_sol", False)
+        buy_amount = signal.get("buy_amount_sol", 0) if buy_in_sol else signal["quantity"]
         try:
             success = await self.executor.buy(
                 token_address=signal["address"],
-                amount=signal["quantity"],
-                denominated_in_sol=False,
+                amount=buy_amount,
+                denominated_in_sol=buy_in_sol,
                 slippage=10.0,
             )
             if not success:
                 logger.error(f"Falha ao comprar {signal['symbol']}")
                 return False
 
-            # Registrar posição
+            # Registrar posição (quantity="100%" quando buy_in_sol para vender tudo)
+            qty_for_record = "100%" if buy_in_sol else signal["quantity"]
             await self.risk_manager.record_position_open(
                 token=signal["address"],
                 entry_price=signal["entry_price"],
-                quantity=signal["quantity"],
+                quantity=qty_for_record,
                 side="BUY",
                 symbol=signal.get("symbol", ""),
             )
 
-            logger.info(f"✅ Posição aberta: {signal['symbol']} qty={signal['quantity']:.6f} @ ${signal['entry_price']:.6f}")
+            log_qty = f"{buy_amount} SOL" if buy_in_sol else f"qty={signal['quantity']:.6f}"
+            logger.info(f"✅ Posição aberta: {signal['symbol']} {log_qty} @ ${signal['entry_price']:.6f}")
             if self.alerter:
                 try:
+                    qty_alert = buy_amount if buy_in_sol else signal["quantity"]
                     await self.alerter.send_trade(
                         symbol=signal["symbol"],
                         side="BUY",
                         price=signal["entry_price"],
-                        quantity=signal["quantity"],
+                        quantity=qty_alert,
                     )
                 except Exception as e:
                     logger.debug(f"Telegram (trade): {e}")
@@ -123,13 +128,17 @@ class PositionManager:
                 logger.error(f"Falha ao vender {token}")
                 return False
 
-            # PnL para notificação
-            if side == "BUY":
-                pnl = (current_price - entry) * quantity
-                pnl_percent = ((current_price - entry) / entry * 100) if entry > 0 else 0
+            # PnL para notificação (0 quando quantity="100%")
+            if isinstance(quantity, (int, float)) and quantity > 0:
+                if side == "BUY":
+                    pnl = (current_price - entry) * quantity
+                    pnl_percent = ((current_price - entry) / entry * 100) if entry > 0 else 0
+                else:
+                    pnl = (entry - current_price) * quantity
+                    pnl_percent = ((entry - current_price) / entry * 100) if entry > 0 else 0
             else:
-                pnl = (entry - current_price) * quantity
-                pnl_percent = ((entry - current_price) / entry * 100) if entry > 0 else 0
+                pnl = 0.0
+                pnl_percent = 0.0
 
             # Registrar fechamento
             await self.risk_manager.record_position_close(token, current_price, reason)

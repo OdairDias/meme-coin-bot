@@ -86,9 +86,16 @@ class MemeScalperStrategy:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado: preço inválido")
                 continue
 
-            # Position size em USD → quantidade de tokens
-            position_size_usd = min(settings.MAX_POSITION_SIZE_USD, 2.0)  # max $2
-            quantity = position_size_usd / current_price
+            # Position size: prioridade SOL (evita erro de conversão USD→tokens)
+            buy_amount_sol = getattr(settings, "MAX_POSITION_SIZE_SOL", 0) or 0
+            if buy_amount_sol > 0:
+                quantity = 0  # não usado quando buy_in_sol=True
+                buy_in_sol = True
+            else:
+                position_size_usd = min(settings.MAX_POSITION_SIZE_USD, 2.0)
+                quantity = position_size_usd / current_price
+                buy_amount_sol = 0
+                buy_in_sol = False
 
             # Stop loss
             stop_price = current_price * (1 - settings.STOP_LOSS_PERCENT / 100)
@@ -103,6 +110,8 @@ class MemeScalperStrategy:
                 "side": "BUY",
                 "entry_price": current_price,
                 "quantity": quantity,
+                "buy_amount_sol": buy_amount_sol,
+                "buy_in_sol": buy_in_sol,
                 "stop_loss": stop_price,
                 "take_profit_1": tp1_price,
                 "take_profit_2": tp2_price,

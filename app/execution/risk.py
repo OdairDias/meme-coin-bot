@@ -32,12 +32,17 @@ class MemeRiskManager:
                     pos_data = self.redis.hgetall(key)
                     if pos_data:
                         token = pos_data.get("token", "")
+                        qty_raw = pos_data.get("quantity", 0)
+                        try:
+                            qty = float(qty_raw) if qty_raw != "100%" else "100%"
+                        except (TypeError, ValueError):
+                            qty = qty_raw if isinstance(qty_raw, str) else 0
                         self.open_positions[token] = {
                             "id": key.decode() if isinstance(key, bytes) else key,
                             "token": token,
                             "symbol": pos_data.get("symbol", token[:8] if isinstance(token, str) else ""),
                             "entry_price": float(pos_data.get("entry_price", 0)),
-                            "quantity": float(pos_data.get("quantity", 0)),
+                            "quantity": qty,
                             "side": pos_data.get("side", "BUY"),
                             "opened_at": datetime.fromisoformat(pos_data.get("opened_at")),
                             "current_price": float(pos_data.get("entry_price", 0)),
@@ -79,7 +84,7 @@ class MemeRiskManager:
 
         return validation
 
-    async def record_position_open(self, token: str, entry_price: float, quantity: float, side: str = "BUY", symbol: str = ""):
+    async def record_position_open(self, token: str, entry_price: float, quantity: float | str, side: str = "BUY", symbol: str = ""):
         """Registra nova posição aberta."""
         pos_id = f"meme:position:{token}"
         position = {
@@ -109,7 +114,8 @@ class MemeRiskManager:
             self.redis.expire(pos_id, 86400 * 7)  # 7 dias
 
         self.open_positions[token] = position
-        logger.info(f"📈 Posição aberta: {token} qty={quantity:.6f} @ ${entry_price:.6f}")
+        qty_log = f"{quantity:.6f}" if isinstance(quantity, (int, float)) else str(quantity)
+        logger.info(f"📈 Posição aberta: {token} qty={qty_log} @ ${entry_price:.6f}")
 
     async def record_position_close(self, token: str, exit_price: float, reason: str):
         """Registra fechamento de posição e calcula PnL."""
@@ -122,12 +128,16 @@ class MemeRiskManager:
         quantity = pos["quantity"]
         side = pos["side"]
 
-        if side == "BUY":
-            pnl = (exit_price - entry) * quantity
-            pnl_percent = ((exit_price - entry) / entry) * 100 if entry > 0 else 0
+        if isinstance(quantity, (int, float)) and quantity > 0:
+            if side == "BUY":
+                pnl = (exit_price - entry) * quantity
+                pnl_percent = ((exit_price - entry) / entry) * 100 if entry > 0 else 0
+            else:
+                pnl = (entry - exit_price) * quantity
+                pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
         else:
-            pnl = (entry - exit_price) * quantity
-            pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
+            pnl = 0.0
+            pnl_percent = 0.0
 
         # Atualizar daily loss
         self.daily_loss += pnl

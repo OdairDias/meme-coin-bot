@@ -40,6 +40,8 @@ class Settings(BaseSettings):
 
     # Risk parameters
     MAX_POSITION_SIZE_USD: float = Field(default=2.0, env="MAX_POSITION_SIZE_USD")
+    # Compra em SOL (prioridade): quando > 0, usa este valor em vez de USD (evita erro de conversão)
+    MAX_POSITION_SIZE_SOL: float = Field(default=0.01, env="MAX_POSITION_SIZE_SOL")
     STOP_LOSS_PERCENT: float = Field(default=20.0, env="STOP_LOSS_PERCENT")
     TAKE_PROFIT_PERCENT1: float = Field(default=100.0, env="TAKE_PROFIT_PERCENT1")
     TAKE_PROFIT_PERCENT2: float = Field(default=300.0, env="TAKE_PROFIT_PERCENT2")
