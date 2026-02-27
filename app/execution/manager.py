@@ -67,7 +67,7 @@ class PositionManager:
                 token_address=signal["address"],
                 amount=buy_amount,
                 denominated_in_sol=buy_in_sol,
-                slippage=10.0,
+                slippage=0,
             )
             if not success:
                 logger.error(f"Falha ao comprar {signal['symbol']}")
@@ -122,7 +122,7 @@ class PositionManager:
                 token_address=token,
                 amount=pos["quantity"],
                 denominated_in_sol=False,
-                slippage=10.0,
+                slippage=0,
             )
             if not success:
                 logger.error(f"Falha ao vender {token}")
@@ -158,9 +158,10 @@ class PositionManager:
     async def _monitor_loop(self):
         """Loop que monitora preços (Jupiter) e verifica SL/TP/timeout."""
         logger.info("Iniciando monitoramento de posições...")
+        interval = max(5, settings.MONITOR_PRICE_INTERVAL_SECONDS)
         while self.running:
             try:
-                await asyncio.sleep(5)
+                await asyncio.sleep(interval)
 
                 for token, pos in list(self.risk_manager.open_positions.items()):
                     current_price = pos["entry_price"]

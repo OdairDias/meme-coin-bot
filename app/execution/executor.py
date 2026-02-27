@@ -2,6 +2,7 @@
 Executor de trades via PumpPortal API
 Documentação: https://pumpportal.fun/local-trading-api/trading-api
 Suporta trade-local (recebe tx serializada → assina → envia ao RPC) e Lightning (resposta JSON).
+Usa Helius RPC quando HELIUS_RPC ou HELIUS_API_KEY estão configurados (evita 429 e melhora inclusão).
 """
 import base64
 import httpx
@@ -12,6 +13,9 @@ from app.core.security import get_wallet_keypair
 from app.core.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Compute units típicos para uma swap (conversão priority fee Helius microlamports → SOL)
+_DEFAULT_CU_SWAP = 200_000
 
 
 def _is_trade_local() -> bool:
@@ -26,7 +30,8 @@ class Executor:
         self.client = httpx.AsyncClient(timeout=30.0)
         self.wallet_kp = get_wallet_keypair(settings.WALLET_PRIVATE_KEY)
         self.wallet_address = str(self.wallet_kp.pubkey())
-        logger.info(f"Executor inicializado. Wallet: {self.wallet_address[:8]}...")
+        self._helius_rpc = "helius" in (settings.get_rpc_url() or "").lower()
+        logger.info(f"Executor inicializado. Wallet: {self.wallet_address[:8]}... (RPC: {'Helius' if self._helius_rpc else 'público'})")
 
     def _payload(
         self,
@@ -50,6 +55,47 @@ class Executor:
             "pool": pool,
         }
 
+    async def _get_helius_priority_fee_sol(self) -> float:
+        """
+        Obtém taxa de prioridade recomendada da Helius (getPriorityFeeEstimate).
+        Retorno em SOL para o PumpPortal. Fallback: 0.00005 SOL.
+        """
+        url = settings.get_rpc_url()
+        if "helius" not in url.lower():
+            return 0.00005
+        level = (settings.PRIORITY_FEE_LEVEL or "high").strip().lower()
+        level_map = {"min": "min", "low": "low", "medium": "medium", "high": "high", "veryhigh": "veryHigh", "unsafemax": "unsafeMax"}
+        level_key = level_map.get(level) or "high"
+        try:
+            body = {
+                "jsonrpc": "2.0",
+                "id": "1",
+                "method": "getPriorityFeeEstimate",
+                "params": [
+                    {
+                        "accountKeys": [self.wallet_address],
+                        "options": {"includeAllPriorityFeeLevels": True},
+                    }
+                ],
+            }
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(url, json=body)
+                r.raise_for_status()
+                data = r.json()
+            if "error" in data:
+                logger.debug(f"Helius priority fee error: {data['error']}")
+                return 0.00005
+            result = data.get("result") or {}
+            levels = result.get("priorityFeeLevels") or {}
+            microlamports = levels.get(level_key) or result.get("priorityFeeEstimate") or 100_000
+            # microlamports per CU → SOL para _DEFAULT_CU_SWAP CUs
+            lamports = float(microlamports) * 1e-6 * _DEFAULT_CU_SWAP
+            fee_sol = lamports / 1e9
+            return max(0.00001, min(0.001, fee_sol))
+        except Exception as e:
+            logger.debug(f"Helius priority fee fallback: {e}")
+            return 0.00005
+
     async def _sign_and_send_tx(self, tx_bytes: bytes) -> Optional[str]:
         """
         Deserializa a tx recebida do PumpPortal, assina com a keypair e envia ao RPC.
@@ -63,7 +109,7 @@ class Executor:
             serialized = bytes(signed_tx)
             b64 = base64.b64encode(serialized).decode("ascii")
 
-            rpc_url = settings.SOLANA_RPC_URL
+            rpc_url = settings.get_rpc_url()
             body = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -171,8 +217,8 @@ class Executor:
         token_address: str,
         amount: float,
         denominated_in_sol: bool = False,
-        slippage: float = 10.0,
-        priority_fee: float = 0.00005,
+        slippage: float = 0,
+        priority_fee: float = 0,
         pool: str = "auto",
     ) -> bool:
         """
@@ -184,6 +230,10 @@ class Executor:
             logger.info(f"[DRY_RUN] BUY {token_address} amount={amount} {unit} slippage={slippage}%")
             return True
 
+        slippage = slippage if slippage > 0 else settings.DEFAULT_SLIPPAGE
+        priority_fee = priority_fee if priority_fee > 0 else (
+            await self._get_helius_priority_fee_sol() if self._helius_rpc else 0.00005
+        )
         try:
             success, _ = await self._execute(
                 action="buy",
@@ -217,8 +267,8 @@ class Executor:
         token_address: str,
         amount: Union[float, str],
         denominated_in_sol: bool = False,
-        slippage: float = 10.0,
-        priority_fee: float = 0.00005,
+        slippage: float = 0,
+        priority_fee: float = 0,
         pool: str = "auto",
     ) -> bool:
         """
@@ -230,6 +280,10 @@ class Executor:
             logger.info(f"[DRY_RUN] SELL {token_address} amount={amount} slippage={slippage}%")
             return True
 
+        slippage = slippage if slippage > 0 else settings.DEFAULT_SLIPPAGE
+        priority_fee = priority_fee if priority_fee > 0 else (
+            await self._get_helius_priority_fee_sol() if self._helius_rpc else 0.00005
+        )
         try:
             success, error = await self._execute(
                 action="sell",

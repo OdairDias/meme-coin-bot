@@ -53,7 +53,16 @@ class Settings(BaseSettings):
     PUMP_PORTAL_WS: str = Field(default="wss://pumpportal.fun/api/data", env="PUMP_PORTAL_WS")
     PUMP_PORTAL_API: str = Field(default="https://pumpportal.fun/api/trade-local", env="PUMP_PORTAL_API")
     # RPC Solana (obrigatório para trade-local: assinar e enviar tx)
+    # Preferir Helius: HELIUS_RPC (URL completa) ou HELIUS_API_KEY para construir URL; senão SOLANA_RPC_URL
     SOLANA_RPC_URL: str = Field(default="https://api.mainnet-beta.solana.com", env="SOLANA_RPC_URL")
+    HELIUS_API_KEY: str | None = Field(default=None, env="HELIUS_API_KEY")
+    HELIUS_RPC: str | None = Field(default=None, env="HELIUS_RPC")  # URL completa, ex: https://mainnet.helius-rpc.com/?api-key=XXX
+    # Slippage padrão para compra/venda (%); 15% reduz risco de overflow em picos
+    DEFAULT_SLIPPAGE: float = Field(default=15.0, env="DEFAULT_SLIPPAGE")
+    # Nível de priority fee para Helius (Min, Low, Medium, High, VeryHigh, UnsafeMax)
+    PRIORITY_FEE_LEVEL: str = Field(default="high", env="PRIORITY_FEE_LEVEL")
+    # Intervalo (s) entre checagens de preço no monitoramento (Jupiter); 15s economiza créditos e é suficiente para SL/TP
+    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=15, env="MONITOR_PRICE_INTERVAL_SECONDS")
 
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")
@@ -68,6 +77,14 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+
+    def get_rpc_url(self) -> str:
+        """RPC URL efetiva: HELIUS_RPC > URL construída com HELIUS_API_KEY > SOLANA_RPC_URL."""
+        if self.HELIUS_RPC and self.HELIUS_RPC.strip():
+            return self.HELIUS_RPC.strip()
+        if self.HELIUS_API_KEY and self.HELIUS_API_KEY.strip():
+            return f"https://mainnet.helius-rpc.com/?api-key={self.HELIUS_API_KEY.strip()}"
+        return self.SOLANA_RPC_URL
 
 
 settings = Settings()
