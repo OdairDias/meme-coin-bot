@@ -148,3 +148,15 @@ async def metrics():
     """Prometheus metrics endpoint."""
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse(content="")  # O servidor de métricas roda separado
+
+
+@app.post("/force-sell-all")
+async def force_sell_all(dry_run: bool = False):
+    """
+    Emergência: vende todos os tokens da carteira para SOL via Jupiter.
+    Ignora estratégia. Varre getTokenAccountsByOwner e executa swap.
+    dry_run=true: apenas lista tokens, não executa.
+    """
+    from app.execution.force_sell import run_force_sell_all
+    result = await run_force_sell_all(dry_run=dry_run)
+    return result

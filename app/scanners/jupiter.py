@@ -78,27 +78,27 @@ class JupiterPriceFetcher:
 
 class PriceFetcherWithFallback:
     """
-    Jupiter primeiro; DexScreener como fallback quando Jupiter falha (401, rate limit, etc).
-    Evita bot "cego" durante monitoramento SL/TP.
+    DexScreener primeiro (estável); Jupiter como fallback.
+    Jupiter Price API retorna 401 ocasionalmente — DexScreener é fonte primária.
     """
 
     async def get_token_info(self, token_address: str) -> Optional[dict]:
-        # 1) Tentar Jupiter
-        try:
-            price = await get_price_usd(token_address)
-            if price is not None and price > 0:
-                return {"price_usd": price}
-        except Exception as e:
-            logger.debug(f"Jupiter falhou para {token_address[:12]}..., fallback DexScreener: {e}")
-
-        # 2) Fallback: DexScreener (gratuito, sem 401 nos logs)
+        # 1) DexScreener como fonte primária (gratuito, estável, sem 401)
         try:
             from app.scanners.dexscreener import get_token_info as dexscreener_info
             info = await dexscreener_info(token_address)
             if info and (info.get("price_usd") or 0) > 0:
-                logger.debug(f"Preço via DexScreener (fallback) para {token_address[:12]}...")
                 return {"price_usd": float(info["price_usd"])}
         except Exception as e:
-            logger.debug(f"DexScreener fallback falhou: {e}")
+            logger.debug(f"DexScreener falhou para {token_address[:12]}...: {e}")
+
+        # 2) Fallback: Jupiter (pode retornar 401)
+        try:
+            price = await get_price_usd(token_address)
+            if price is not None and price > 0:
+                logger.debug(f"Preço via Jupiter (fallback) para {token_address[:12]}...")
+                return {"price_usd": price}
+        except Exception as e:
+            logger.debug(f"Jupiter fallback falhou: {e}")
 
         return None
