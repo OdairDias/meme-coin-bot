@@ -31,12 +31,59 @@ def get_associated_token_address(owner: Pubkey, mint: Pubkey) -> Pubkey:
     return addr
 
 
-async def get_token_balance_raw(rpc_url: str, wallet_pubkey: str, mint: str) -> Optional[Tuple[int, int]]:
+async def get_token_balance_raw(
+    rpc_url: str,
+    wallet_pubkey: str,
+    mint: str,
+    fallback_amount_raw: Optional[int] = None,
+) -> Optional[Tuple[int, int]]:
     """
-    Obtém saldo real do token na carteira via RPC getTokenAccountBalance.
-    Retorna (amount_raw, decimals) ou None se conta não existir/sem saldo.
-    amount_raw = valor em unidades atômicas (para Jupiter quote).
+    Obtém saldo real do token na carteira.
+    1) getTokenAccountsByOwner com filtro mint (encontra conta real, evita -32602)
+    2) getTokenAccountBalance na ATA derivada
+    3) getAccountInfo na ATA
+    4) fallback_amount_raw (ex: positions.json) como último recurso
+    Retorna (amount_raw, decimals) ou None.
     """
+    # 1) getTokenAccountsByOwner com filtro mint — encontra conta independente de ATA
+    try:
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                wallet_pubkey,
+                {"mint": mint},
+                {"encoding": "jsonParsed"},
+            ],
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(rpc_url, json=body)
+            r.raise_for_status()
+            data = r.json()
+
+        if "error" in data:
+            logger.debug(f"getTokenAccountsByOwner erro: {data['error']}")
+        else:
+            total_raw = 0
+            decimals = 6
+            for item in data.get("result", {}).get("value", []):
+                try:
+                    parsed = item.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+                    token_amount = parsed.get("tokenAmount", {})
+                    amount_str = token_amount.get("amount", "0")
+                    decimals = int(token_amount.get("decimals", 6))
+                    amt = int(amount_str)
+                    if amt > 0:
+                        total_raw += amt
+                except Exception:
+                    continue
+            if total_raw > 0:
+                return total_raw, decimals
+    except Exception as e:
+        logger.debug(f"getTokenAccountsByOwner erro: {e}")
+
+    # 2) getTokenAccountBalance na ATA derivada
     try:
         owner = Pubkey.from_string(wallet_pubkey)
         mint_pk = Pubkey.from_string(mint)
@@ -55,23 +102,53 @@ async def get_token_balance_raw(rpc_url: str, wallet_pubkey: str, mint: str) -> 
             data = r.json()
 
         if "error" in data:
-            logger.debug(f"getTokenAccountBalance erro: {data['error']}")
-            return None
-
-        value = data.get("result", {}).get("value")
-        if not value:
-            return None
-
-        amount_str = value.get("amount", "0")
-        decimals = int(value.get("decimals", 6))
-        amount_raw = int(amount_str)
-        if amount_raw <= 0:
-            return None
-
-        return amount_raw, decimals
+            logger.debug(f"getTokenAccountBalance ATA erro: {data['error']}")
+        else:
+            value = data.get("result", {}).get("value")
+            if value:
+                amount_str = value.get("amount", "0")
+                decimals = int(value.get("decimals", 6))
+                amount_raw = int(amount_str)
+                if amount_raw > 0:
+                    return amount_raw, decimals
     except Exception as e:
-        logger.debug(f"get_token_balance_raw erro: {e}")
-        return None
+        logger.debug(f"getTokenAccountBalance erro: {e}")
+
+    # 3) getAccountInfo na ATA (parse manual se necessário)
+    try:
+        owner = Pubkey.from_string(wallet_pubkey)
+        mint_pk = Pubkey.from_string(mint)
+        ata = get_associated_token_address(owner, mint_pk)
+        ata_str = str(ata)
+
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [ata_str, {"encoding": "jsonParsed"}],
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(rpc_url, json=body)
+            r.raise_for_status()
+            data = r.json()
+
+        if "error" not in data:
+            parsed = data.get("result", {}).get("value", {}).get("data", {}).get("parsed", {}).get("info", {})
+            token_amount = parsed.get("tokenAmount", {})
+            amount_str = token_amount.get("amount", "0")
+            decimals = int(token_amount.get("decimals", 6))
+            amount_raw = int(amount_str)
+            if amount_raw > 0:
+                return amount_raw, decimals
+    except Exception as e:
+        logger.debug(f"getAccountInfo ATA erro: {e}")
+
+    # 4) Último recurso: saldo do positions.json
+    if fallback_amount_raw and fallback_amount_raw > 0:
+        logger.info(f"Usando amount_raw do positions.json para {mint[:12]}... (chain indisponível)")
+        return fallback_amount_raw, 6  # decimals default
+
+    return None
 
 
 async def get_sell_quote(

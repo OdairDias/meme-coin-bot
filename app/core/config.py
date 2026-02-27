@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     PRIORITY_FEE_LEVEL: str = Field(default="high", env="PRIORITY_FEE_LEVEL")
     # Intervalo (s) entre checagens de preço no monitoramento (Jupiter); 15s economiza créditos e é suficiente para SL/TP
     MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=15, env="MONITOR_PRICE_INTERVAL_SECONDS")
+    # Ao iniciar: vender tokens na carteira que não estão em positions.json (resíduos)
+    AUTO_CLEANUP_ON_STARTUP: bool = Field(default=False, env="AUTO_CLEANUP_ON_STARTUP")
 
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")

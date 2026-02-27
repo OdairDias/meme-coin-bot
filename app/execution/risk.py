@@ -20,37 +20,55 @@ class MemeRiskManager:
         self._load_state()
 
     def _load_state(self):
-        """Carrega estado do Redis se disponível."""
+        """Carrega estado: positions.json (primeiro) + Redis (daily_loss)."""
+        # 1) Posições de data/positions.json (persiste entre reinícios)
+        try:
+            from app.execution.positions_persistence import load_positions
+
+            file_positions = load_positions()
+            for token, pos in file_positions.items():
+                try:
+                    qty = pos.get("quantity", "100%")
+                    if isinstance(qty, (int, float)):
+                        pass
+                    elif isinstance(qty, str) and "100" in qty:
+                        qty = "100%"
+                    else:
+                        try:
+                            qty = float(qty)
+                        except (TypeError, ValueError):
+                            qty = "100%"
+                    opened_at = pos.get("opened_at")
+
+                    if isinstance(opened_at, str):
+                        opened_at = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+                    self.open_positions[token] = {
+                        "token": token,
+                        "symbol": pos.get("symbol", token[:8] if isinstance(token, str) else ""),
+                        "entry_price": float(pos.get("entry_price", 0)),
+                        "quantity": qty,
+                        "side": pos.get("side", "BUY"),
+                        "opened_at": opened_at or datetime.now(timezone.utc),
+                        "current_price": float(pos.get("current_price", pos.get("entry_price", 0))),
+                        "pnl": 0.0,
+                        "pnl_percent": 0.0,
+                        "amount_raw": pos.get("amount_raw"),
+                    }
+                except Exception as e:
+                    logger.debug(f"Posição {token} ignorada: {e}")
+            if file_positions:
+                logger.info(f"Carregadas {len(file_positions)} posição(ões) de positions.json")
+        except Exception as e:
+            logger.warning(f"Erro ao carregar positions.json: {e}")
+
+        # 2) Redis: daily_loss e merge de posições (se Redis tiver mais recente)
         if self.redis:
             try:
                 daily_loss = self.redis.get("meme:daily_loss")
                 if daily_loss:
                     self.daily_loss = float(daily_loss)
-                # Carregar posições abertas
-                pos_keys = self.redis.keys("meme:position:*")
-                for key in pos_keys:
-                    pos_data = self.redis.hgetall(key)
-                    if pos_data:
-                        token = pos_data.get("token", "")
-                        qty_raw = pos_data.get("quantity", 0)
-                        try:
-                            qty = float(qty_raw) if qty_raw != "100%" else "100%"
-                        except (TypeError, ValueError):
-                            qty = qty_raw if isinstance(qty_raw, str) else 0
-                        self.open_positions[token] = {
-                            "id": key.decode() if isinstance(key, bytes) else key,
-                            "token": token,
-                            "symbol": pos_data.get("symbol", token[:8] if isinstance(token, str) else ""),
-                            "entry_price": float(pos_data.get("entry_price", 0)),
-                            "quantity": qty,
-                            "side": pos_data.get("side", "BUY"),
-                            "opened_at": datetime.fromisoformat(pos_data.get("opened_at")),
-                            "current_price": float(pos_data.get("entry_price", 0)),
-                            "pnl": 0.0,
-                            "pnl_percent": 0.0,
-                        }
             except Exception as e:
-                logger.error(f"Erro ao carregar estado do Redis: {e}")
+                logger.debug(f"Redis daily_loss: {e}")
 
     def validate_signal(self, signal: Dict[str, Any], current_equity: float) -> Dict[str, Any]:
         """Valida se um sinal pode ser executado."""
@@ -85,7 +103,7 @@ class MemeRiskManager:
         return validation
 
     async def record_position_open(self, token: str, entry_price: float, quantity: float | str, side: str = "BUY", symbol: str = ""):
-        """Registra nova posição aberta."""
+        """Registra nova posição aberta (memória + Redis + positions.json)."""
         pos_id = f"meme:position:{token}"
         position = {
             "token": token,
@@ -98,6 +116,13 @@ class MemeRiskManager:
             "pnl": 0.0,
             "pnl_percent": 0.0
         }
+
+        # Persistência em positions.json (sobrevive reinício)
+        try:
+            from app.execution.positions_persistence import add_position
+            add_position(token, entry_price, quantity, symbol or token[:8], amount_raw=None)
+        except Exception as e:
+            logger.warning(f"Erro ao salvar posição em positions.json: {e}")
 
         if self.redis:
             self.redis.hset(pos_id, mapping={
@@ -142,8 +167,13 @@ class MemeRiskManager:
         # Atualizar daily loss
         self.daily_loss += pnl
 
-        # Remover posição
+        # Remover posição (memória + Redis + positions.json)
         pos_id = f"meme:position:{token}"
+        try:
+            from app.execution.positions_persistence import remove_position
+            remove_position(token)
+        except Exception as e:
+            logger.warning(f"Erro ao remover posição de positions.json: {e}")
         if self.redis:
             self.redis.delete(pos_id)
         del self.open_positions[token]

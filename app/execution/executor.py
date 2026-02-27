@@ -274,13 +274,19 @@ class Executor:
         return self._is_bonding_curve_error(err)
 
     async def _get_real_token_balance_raw(self, token_address: str) -> Optional[int]:
-        """Consulta saldo real na blockchain (getTokenAccountBalance)."""
+        """Consulta saldo real na blockchain (getTokenAccountsByOwner, ATA, positions.json)."""
         from app.execution.jupiter_swap import get_token_balance_raw
+        from app.execution.positions_persistence import get_position_amount_raw, update_amount_raw
 
         rpc_url = settings.get_rpc_url()
-        result = await get_token_balance_raw(rpc_url, self.wallet_address, token_address)
+        fallback = get_position_amount_raw(token_address)
+        result = await get_token_balance_raw(
+            rpc_url, self.wallet_address, token_address, fallback_amount_raw=fallback
+        )
         if result:
-            return result[0]
+            amount_raw, _ = result
+            update_amount_raw(token_address, amount_raw)  # cache para próximo fallback
+            return amount_raw
         return None
 
     async def sell(

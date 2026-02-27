@@ -115,6 +115,16 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(pump_scanner.start())  # loop que recebe mensagens do WebSocket
     await position_manager.start()
 
+    # 6b) Auto-cleanup: vender resíduos (tokens na carteira fora de positions.json)
+    if getattr(settings, "AUTO_CLEANUP_ON_STARTUP", False):
+        try:
+            from app.execution.startup_cleanup import run_startup_cleanup
+            cleanup_result = await run_startup_cleanup()
+            if not cleanup_result.get("skipped") and cleanup_result.get("sold", 0) > 0:
+                logger.info(f"Startup cleanup: {cleanup_result['sold']} resíduo(s) vendido(s)")
+        except Exception as e:
+            logger.warning(f"Startup cleanup: {e}")
+
     # 7) Iniciar métricas Prometheus
     init_metrics(port=9090)
 
