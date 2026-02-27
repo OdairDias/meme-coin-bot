@@ -27,7 +27,10 @@ async def get_price_usd(mint_address: str) -> Optional[float]:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(JUPITER_PRICE_URL, params={"ids": mint_address})
             if resp.status_code != 200:
-                logger.debug(f"Jupiter price {resp.status_code} para {mint_address[:12]}...")
+                if resp.status_code == 401:
+                    logger.warning("Jupiter 401 Unauthorized — fallback DexScreener será usado")
+                else:
+                    logger.debug(f"Jupiter price {resp.status_code} para {mint_address[:12]}...")
                 return None
             data = resp.json()
             token_data = data.get("data", {}).get(mint_address)
@@ -70,4 +73,32 @@ class JupiterPriceFetcher:
         price = await get_price_usd(token_address)
         if price is not None and price > 0:
             return {"price_usd": price}
+        return None
+
+
+class PriceFetcherWithFallback:
+    """
+    Jupiter primeiro; DexScreener como fallback quando Jupiter falha (401, rate limit, etc).
+    Evita bot "cego" durante monitoramento SL/TP.
+    """
+
+    async def get_token_info(self, token_address: str) -> Optional[dict]:
+        # 1) Tentar Jupiter
+        try:
+            price = await get_price_usd(token_address)
+            if price is not None and price > 0:
+                return {"price_usd": price}
+        except Exception as e:
+            logger.debug(f"Jupiter falhou para {token_address[:12]}..., fallback DexScreener: {e}")
+
+        # 2) Fallback: DexScreener (gratuito, sem 401 nos logs)
+        try:
+            from app.scanners.dexscreener import get_token_info as dexscreener_info
+            info = await dexscreener_info(token_address)
+            if info and (info.get("price_usd") or 0) > 0:
+                logger.debug(f"Preço via DexScreener (fallback) para {token_address[:12]}...")
+                return {"price_usd": float(info["price_usd"])}
+        except Exception as e:
+            logger.debug(f"DexScreener fallback falhou: {e}")
+
         return None

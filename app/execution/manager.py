@@ -156,9 +156,9 @@ class PositionManager:
             return False
 
     async def _monitor_loop(self):
-        """Loop que monitora preços (Jupiter) e verifica SL/TP/timeout."""
-        logger.info("Iniciando monitoramento de posições...")
+        """Loop que monitora preços (Jupiter + DexScreener fallback) e verifica SL/TP/timeout."""
         interval = max(5, settings.MONITOR_PRICE_INTERVAL_SECONDS)
+        logger.info("Iniciando monitoramento de posições... (intervalo %ds)", interval)
         while self.running:
             try:
                 await asyncio.sleep(interval)
