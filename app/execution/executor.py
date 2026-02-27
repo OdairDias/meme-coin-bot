@@ -259,14 +259,14 @@ class Executor:
             import asyncio
             logger.info(f"⏳ Aguardando confirmação da blockchain para entrega do saldo de {token_address[:12]}...")
             
-            # Checa o saldo local com a RPC. Caso chegue > 0, significa que a block consolidou a sua posse.
-            for i in range(15):  # Limite máximo de até ~22s
-                await asyncio.sleep(1.5)
+            # Ajuste de rate-limit: 8 checagens com 2.5s de intervalo (~20s max) para evitar bloqueio da RPC
+            for i in range(8):
+                await asyncio.sleep(2.5)
                 balance_raw = await self._get_real_token_balance_raw(token_address)
                 if balance_raw and balance_raw > 0:
                     logger.info(f"✅ Compra confirmada na blockchain! tokens recebidos na carteira: {token_address[:12]}...")
                     return True
-                logger.debug(f"Confirmando saldo de {token_address[:12]} na carteira... tentativa {i+1}/15")
+                logger.debug(f"Confirmando saldo de {token_address[:12]} na carteira... tentativa {i+1}/8")
 
             logger.error(f"❌ COMPRA FALHADA (Timeout): O token {token_address[:12]} não entrou na carteira após timeout. Provável cancelamento por Slippage na rede Solana.")
             return False
