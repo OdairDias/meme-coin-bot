@@ -58,14 +58,15 @@ class Executor:
     async def _get_helius_priority_fee_sol(self) -> float:
         """
         Obtém taxa de prioridade recomendada da Helius (getPriorityFeeEstimate).
-        Retorno em SOL para o PumpPortal. Fallback: 0.00005 SOL.
+        Retorno em SOL para o PumpPortal. Fallback competitivo: 0.0001 SOL.
         """
         url = settings.get_rpc_url()
+        base_fallback = getattr(settings, "PRIORITY_FEE_FALLBACK_SOL", 0.0001)
         if "helius" not in url.lower():
-            return 0.00005
-        level = (settings.PRIORITY_FEE_LEVEL or "high").strip().lower()
+            return base_fallback
+        level = (getattr(settings, "PRIORITY_FEE_LEVEL", "veryhigh") or "veryhigh").strip().lower() # Default para veryHigh em memecoins
         level_map = {"min": "min", "low": "low", "medium": "medium", "high": "high", "veryhigh": "veryHigh", "unsafemax": "unsafeMax"}
-        level_key = level_map.get(level) or "high"
+        level_key = level_map.get(level) or "veryHigh"
         try:
             body = {
                 "jsonrpc": "2.0",
@@ -84,17 +85,17 @@ class Executor:
                 data = r.json()
             if "error" in data:
                 logger.debug(f"Helius priority fee error: {data['error']}")
-                return 0.00005
+                return base_fallback
             result = data.get("result") or {}
             levels = result.get("priorityFeeLevels") or {}
-            microlamports = levels.get(level_key) or result.get("priorityFeeEstimate") or 100_000
+            microlamports = levels.get(level_key) or result.get("priorityFeeEstimate") or 500_000
             # microlamports per CU → SOL para _DEFAULT_CU_SWAP CUs
             lamports = float(microlamports) * 1e-6 * _DEFAULT_CU_SWAP
             fee_sol = lamports / 1e9
-            return max(0.00001, min(0.001, fee_sol))
+            return max(0.00005, min(0.003, fee_sol)) # Max teto aumentado para 0.003 para garantir snipes rápidos
         except Exception as e:
             logger.debug(f"Helius priority fee fallback: {e}")
-            return 0.00005
+            return base_fallback
 
     async def _sign_and_send_tx(self, tx_bytes: bytes) -> Optional[str]:
         """
@@ -227,7 +228,7 @@ class Executor:
         pool: str = "auto",
     ) -> bool:
         """
-        Compra token via PumpPortal.
+        Compra token via PumpPortal e verifica na blockchain o recebimento saldo antes de fechar o loop.
         amount: SOL se denominated_in_sol=True, tokens se False.
         """
         if settings.DRY_RUN:
@@ -235,9 +236,12 @@ class Executor:
             logger.info(f"[DRY_RUN] BUY {token_address} amount={amount} {unit} slippage={slippage}%")
             return True
 
-        slippage = slippage if slippage > 0 else settings.DEFAULT_SLIPPAGE
+        # Memecoins requerem um slippage mais solto para compra inicial. Vamos garantir ao menos 15%.
+        def_slippage = getattr(settings, 'DEFAULT_SLIPPAGE', 15.0)
+        slippage = slippage if slippage > 0 else max(15.0, def_slippage)
+        
         priority_fee = priority_fee if priority_fee > 0 else (
-            await self._get_helius_priority_fee_sol() if self._helius_rpc else 0.00005
+            await self._get_helius_priority_fee_sol() if self._helius_rpc else getattr(settings, "PRIORITY_FEE_FALLBACK_SOL", 0.0001)
         )
         try:
             success, _ = await self._execute(
@@ -249,7 +253,24 @@ class Executor:
                 priority_fee=priority_fee,
                 pool=pool,
             )
-            return success
+            if not success:
+                return False
+
+            import asyncio
+            logger.info(f"⏳ Aguardando confirmação da blockchain para entrega do saldo de {token_address[:12]}...")
+            
+            # Checa o saldo local com a RPC. Caso chegue > 0, significa que a block consolidou a sua posse.
+            for i in range(15):  # Limite máximo de até ~22s
+                await asyncio.sleep(1.5)
+                balance_raw = await self._get_real_token_balance_raw(token_address)
+                if balance_raw and balance_raw > 0:
+                    logger.info(f"✅ Compra confirmada na blockchain! tokens recebidos na carteira: {token_address[:12]}...")
+                    return True
+                logger.debug(f"Confirmando saldo de {token_address[:12]} na carteira... tentativa {i+1}/15")
+
+            logger.error(f"❌ COMPRA FALHADA (Timeout): O token {token_address[:12]} não entrou na carteira após timeout. Provável cancelamento por Slippage na rede Solana.")
+            return False
+
         except Exception as e:
             logger.error(f"Erro ao executar COMPRA: {e}", exc_info=True)
             return False
