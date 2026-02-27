@@ -116,7 +116,12 @@ class Executor:
                 "method": "sendTransaction",
                 "params": [
                     b64,
-                    {"encoding": "base64", "skipPreflight": False, "preflightCommitment": "confirmed"},
+                    {
+                        "encoding": "base64",
+                        # Helius e outros RPCs privados não suportam preflight; enviamos direto
+                        "skipPreflight": True,
+                        "preflightCommitment": "confirmed",
+                    },
                 ],
             }
             async with httpx.AsyncClient(timeout=30.0) as rpc_client:
