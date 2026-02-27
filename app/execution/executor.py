@@ -313,7 +313,7 @@ class Executor:
             balance_raw = await self._get_real_token_balance_raw(token_address)
             if not balance_raw or balance_raw <= 0:
                 logger.warning(f"Saldo zero ou conta inexistente para {token_address[:12]}...")
-                return False
+                raise ValueError("ZERO_BALANCE")
             amount_to_use = "100%"  # PumpPortal aceita "100%"; Jupiter usa balance_raw
 
         slippage_first = 10.0  # 10% primeira tentativa

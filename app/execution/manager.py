@@ -118,12 +118,21 @@ class PositionManager:
 
         # Executar venda
         try:
-            success = await self.executor.sell(
-                token_address=token,
-                amount=pos["quantity"],
-                denominated_in_sol=False,
-                slippage=0,
-            )
+            try:
+                success = await self.executor.sell(
+                    token_address=token,
+                    amount=pos["quantity"],
+                    denominated_in_sol=False,
+                    slippage=0,
+                )
+            except ValueError as e:
+                if str(e) == "ZERO_BALANCE":
+                    logger.warning(f"Saldo zero para {token}, fechando localmente.")
+                    success = True
+                    reason = f"{reason}_ZERO_BALANCE"
+                else:
+                    raise
+
             if not success:
                 logger.error(f"Falha ao vender {token}")
                 return False
