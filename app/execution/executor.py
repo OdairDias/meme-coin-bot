@@ -257,19 +257,27 @@ class Executor:
                 return False
 
             import asyncio
-            logger.info(f"⏳ Aguardando confirmação da blockchain para entrega do saldo de {token_address[:12]}...")
+            logger.info(f"⏳ tx enviada. Atestando recebimento do token {token_address[:12]} em background (pode demorar)...")
             
-            # Ajuste de rate-limit: 8 checagens com 2.5s de intervalo (~20s max) para evitar bloqueio da RPC
-            for i in range(8):
-                await asyncio.sleep(2.5)
-                balance_raw = await self._get_real_token_balance_raw(token_address)
-                if balance_raw and balance_raw > 0:
-                    logger.info(f"✅ Compra confirmada na blockchain! tokens recebidos na carteira: {token_address[:12]}...")
-                    return True
-                logger.debug(f"Confirmando saldo de {token_address[:12]} na carteira... tentativa {i+1}/8")
+            async def _check_balance_async():
+                # Loop de verificação não-bloqueante de até 60 segundos
+                for j in range(20):
+                    await asyncio.sleep(3.0)
+                    try:
+                        balance_raw = await self._get_real_token_balance_raw(token_address)
+                        if balance_raw and balance_raw > 0:
+                            logger.info(f"✅ Saldo confirmado na blockchain! {token_address[:12]} está na carteira.")
+                            return
+                        logger.debug(f"Aguardando indexação do {token_address[:12]} na carteira... {j+1}/20")
+                    except Exception as ex:
+                        logger.debug(f"Erro ao checar saldo de {token_address[:12]}: {ex}")
+                logger.warning(f"⚠️ Aviso: O saldo de {token_address[:12]} não apareceu após 60s, mas a tx de compra foi iniciada.")
 
-            logger.error(f"❌ COMPRA FALHADA (Timeout): O token {token_address[:12]} não entrou na carteira após timeout. Provável cancelamento por Slippage na rede Solana.")
-            return False
+            # Roda a verificação de saldo em background
+            asyncio.create_task(_check_balance_async())
+
+            # Se _execute() retornou success = True, assumimos que a compra foi feita e registramos na PositionManager agora
+            return True
 
         except Exception as e:
             logger.error(f"Erro ao executar COMPRA: {e}", exc_info=True)
