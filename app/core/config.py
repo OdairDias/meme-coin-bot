@@ -18,10 +18,10 @@ class Settings(BaseSettings):
     # APIs
     BIRDEYE_API_KEY: str | None = Field(default=None, env="BIRDEYE_API_KEY")
     BITQUERY_API_KEY: str | None = Field(default=None, env="BITQUERY_API_KEY")
-    # Delay (s) após detectar token antes de consultar OHLCV — Bitquery leva 3-8 min para indexar
+    # Delay (s) após detectar token antes de consultar OHLCV (Bitquery/Birdeye indexação)
     BIRDEYE_DELAY_SECONDS: int = Field(default=300, env="BIRDEYE_DELAY_SECONDS")
-    # Market cap mínimo (SOL) — tokens >55 SOL indexados mais rápido pela Bitquery
-    MIN_MARKET_CAP_SOL: float = Field(default=60.0, env="MIN_MARKET_CAP_SOL")
+    # Market cap mínimo (SOL) — só analisa tokens com market cap >= este valor (45 = régua mais baixa)
+    MIN_MARKET_CAP_SOL: float = Field(default=45.0, env="MIN_MARKET_CAP_SOL")
     # Re-scan: segundos entre tentativas — 120s economiza API e permite mais candles
     RESCAN_DELAY_SECONDS: int = Field(default=120, env="RESCAN_DELAY_SECONDS")
     # Anti-clone: ignorar tokens com mesmo symbol por N segundos (evita spam AGENC x50)

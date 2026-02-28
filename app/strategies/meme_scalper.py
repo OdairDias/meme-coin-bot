@@ -1,6 +1,6 @@
 """
 Estratégia principal de scalper para memecoins
-Dados: OHLCV (Bitquery), preço SOL (Jupiter), volume/liquidez (DexScreener ou Bitquery)
+OHLCV: Bitquery (primário se BITQUERY_API_KEY) ou Birdeye (fallback). Preço SOL: Jupiter. Volume/liquidez: DexScreener.
 """
 import asyncio
 import logging
@@ -49,7 +49,7 @@ class MemeScalperStrategy:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado (filtro): {reason}")
                 continue
 
-            # 2) Buscar OHLCV (1m, Bitquery ou Birdeye)
+            # 2) Buscar OHLCV (1m): Bitquery se configurado, senão Birdeye
             ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="1m", limit=10)
             if not ohlcv_data or not ohlcv_data.get("ohlcv"):
                 logger.info(f"❌ {asset.get('symbol')} rejeitado: sem OHLCV")
@@ -64,7 +64,7 @@ class MemeScalperStrategy:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado (pattern): {reason} ({len(ohlcv)} candles)")
                 continue
 
-            # 4) Enriquecer para score: marketCapSol*SOL, volume Bitquery, DexScreener (fallback)
+            # 4) Enriquecer para score: marketCapSol*SOL, volume do OHLCV, DexScreener (fallback)
             sol_price = await get_sol_price_usd()
             if sol_price and sol_price > 0:
                 self._sol_price_cache = sol_price
@@ -76,7 +76,7 @@ class MemeScalperStrategy:
             if market_cap_sol > 0:
                 asset["market_cap"] = market_cap_sol * sol_price
 
-            # Volume USD: soma dos candles Bitquery (volume*close = SOL, *sol_price = USD)
+            # Volume USD: soma dos candles (volume*close em SOL) * sol_price
             volume_sol = sum(
                 (c.get("volume", 0) or 0) * (c.get("close", 0) or c.get("high", 0) or 0)
                 for c in ohlcv
@@ -85,7 +85,7 @@ class MemeScalperStrategy:
             if volume_usd > 0:
                 asset["volume_24h"] = volume_usd
 
-            # DexScreener: volume/liquidez quando Bitquery volume baixo ou market_cap ausente (createEventNotification)
+            # DexScreener: volume/liquidez quando volume do OHLCV baixo ou market_cap ausente
             if (asset.get("volume_24h") or 0) < 100 or (asset.get("market_cap") or 0) <= 0:
                 try:
                     info = await dexscreener.get_token_info(token_address)

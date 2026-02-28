@@ -137,7 +137,7 @@ class PumpPortalScanner:
             "mint": result.get("mint"),
             "symbol": result.get("symbol", "UNKNOWN"),
             "name": result.get("name", "Unknown"),
-            "market_cap": 0,  # evento não traz; estratégia/Birdeye podem preencher
+            "market_cap": 0,  # evento não traz; estratégia/DexScreener podem preencher
             "volume_24h": 0,
             "holders": 0,
             "dev_holding_percent": 0,

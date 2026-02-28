@@ -1,7 +1,7 @@
 """
-Birdeye Scanner — Dados complementares (volume, liquidez, holders)
-Usa endpoints oficiais da API Birdeye: /defi/token_overview e /defi/ohlcv
-OHLCV: Bitquery quando BITQUERY_API_KEY configurada (evita limite Birdeye)
+Birdeye Scanner — Dados complementares (volume, liquidez, holders) e OHLCV fallback.
+- OHLCV: Bitquery é a fonte primária quando BITQUERY_API_KEY está configurada; Birdeye só quando Bitquery não está ou falha.
+- token_overview: Birdeye (quando BIRDEYE_API_KEY configurada).
 """
 import asyncio
 import time
@@ -143,7 +143,7 @@ class BirdeyeScanner:
             return None
 
     async def get_ohlcv(self, token_address: str, interval: str = "5m", limit: int = 50) -> Optional[Dict[str, Any]]:
-        """Obtém OHLCV: Bitquery (se configurado) ou Birdeye."""
+        """OHLCV: Bitquery (primário se configurado) ou Birdeye (fallback)."""
         if self._bitquery:
             return await self._bitquery.get_ohlcv(token_address, interval=interval, limit=limit)
         if not self.api_key:

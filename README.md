@@ -24,7 +24,8 @@ Copie `.env.example` para `.env` e configure:
 | Variável | Obrigatório | Descrição |
 |----------|-------------|-----------|
 | `WALLET_PRIVATE_KEY` | ✅ | Private key da wallet Solana (base58) |
-| `BIRDEYE_API_KEY` | ⚠️ | Recomendado para dados OHLCV |
+| `BIRDEYE_API_KEY` | ⚠️ | Fallback OHLCV quando Bitquery não está configurado |
+| `BITQUERY_API_KEY` | ⚠️ | Fonte primária de OHLCV (recomendado; evita limite Birdeye) |
 | `TELEGRAM_BOT_TOKEN` | ⚠️ | Para alertas |
 | `TELEGRAM_CHAT_ID` | ⚠️ | Seu chat ID |
 | `DRY_RUN` | ✅ | `true` para simulação, `false` para real |
@@ -96,7 +97,8 @@ memecoin-bot/
 │   │   └── logger.py      # Logging
 │   ├── scanners/
 │   │   ├── pump_portal.py # WS novos tokens
-│   │   ├── birdeye.py     # Dados OHLCV
+│   │   ├── birdeye.py     # OHLCV fallback + token_overview; Bitquery = primário OHLCV
+│   │   ├── bitquery.py    # OHLCV Pump.fun (primário quando configurado)
 │   │   └── dex_screener.py# Fonte alternativa
 │   ├── strategies/
 │   │   ├── meme_scalper.py# Estratégia principal

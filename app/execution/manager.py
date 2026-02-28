@@ -25,7 +25,7 @@ class PositionManager:
     ):
         self.executor = executor
         self.risk_manager = risk_manager
-        self.price_fetcher = price_fetcher  # ex.: BirdeyeScanner com get_token_info
+        self.price_fetcher = price_fetcher  # DexScreener primário, Jupiter fallback (SL/TP)
         self.alerter = alerter  # TelegramAlerter para notificações
         self.running = False
         self.monitor_task: asyncio.Task | None = None
@@ -166,7 +166,7 @@ class PositionManager:
             return False
 
     async def _monitor_loop(self):
-        """Loop que monitora preços (Jupiter + DexScreener fallback) e verifica SL/TP/timeout."""
+        """Loop que monitora preços (DexScreener primário, Jupiter fallback) e verifica SL/TP/timeout."""
         interval = max(5, settings.MONITOR_PRICE_INTERVAL_SECONDS)
         logger.info("Iniciando monitoramento de posições... (intervalo %ds)", interval)
         while self.running:

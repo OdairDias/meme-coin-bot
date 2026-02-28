@@ -56,9 +56,9 @@ async def lifespan(app: FastAPI):
 
     # 4) Registrar callback do scanner
     async def on_new_token(token_data: dict):
-        """Processa novo token do PumpPortal (com delay para Birdeye ter candles)."""
+        """Processa novo token do PumpPortal (com delay para OHLCV na Bitquery/Birdeye)."""
         # Tokens já migrados (pool=raydium) continuam sendo analisados; a compra será feita via pool=raydium
-        # Pré-filtro: market cap mínimo (60 SOL = indexação mais rápida na Bitquery)
+        # Pré-filtro: market cap mínimo (45 SOL)
         market_cap = token_data.get("market_cap", 0) or 0
         min_mc = settings.MIN_MARKET_CAP_SOL
         if market_cap > 0 and market_cap < min_mc:
@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
                         del _symbol_analyzing[k]
 
         async def process_after_delay(rescan_count: int = 0):
-            """Aguarda delay para Birdeye ter candles; re-scan até MAX_RESCAN_ATTEMPTS vezes."""
+            """Aguarda delay para OHLCV (Bitquery ou Birdeye); re-scan até MAX_RESCAN_ATTEMPTS vezes."""
             delay = settings.BIRDEYE_DELAY_SECONDS if rescan_count == 0 else settings.RESCAN_DELAY_SECONDS
             if delay > 0:
                 symbol = token_data.get("symbol", "?")
@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
 
     pump_scanner.register_callback(on_new_token)
 
-    # 5) Inicializar PositionManager (Jupiter + DexScreener fallback para preço SL/TP; Telegram para alertas)
+    # 5) Inicializar PositionManager (preço SL/TP: DexScreener primário, Jupiter fallback; Telegram para alertas)
     price_fetcher = PriceFetcherWithFallback()
     position_manager = PositionManager(executor, risk_manager, price_fetcher=price_fetcher, alerter=alerter)
 
