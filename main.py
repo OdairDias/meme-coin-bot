@@ -51,6 +51,15 @@ async def lifespan(app: FastAPI):
     risk_manager = MemeRiskManager()
     alerter = TelegramAlerter()
 
+    # 2b) Postgres: criar tabelas se DATABASE_URL definido (Railway)
+    if getattr(settings, "DATABASE_URL", None) and str(settings.DATABASE_URL or "").strip():
+        try:
+            from app.db.postgres import init_schema
+            if init_schema():
+                logger.info("Banco de dados Postgres ativo (posições + histórico)")
+        except Exception as e:
+            logger.warning(f"Postgres init: {e}")
+
     # 3) Inicializar strategy
     strategy = MemeScalperStrategy(birdeye)
 
@@ -141,6 +150,11 @@ async def lifespan(app: FastAPI):
         await pump_scanner.stop()
     await executor.close()
     await birdeye.close()
+    try:
+        from app.db.postgres import close_connection
+        close_connection()
+    except Exception:
+        pass
     logger.info("✅ Bot encerrado")
 
 

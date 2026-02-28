@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")
 
+    # PostgreSQL (Railway ou local) — quando definido, posições e histórico usam o DB em vez de positions.json
+    DATABASE_URL: str | None = Field(default=None, env="DATABASE_URL")
+
     # Logging
     LOG_LEVEL: str = Field(default="INFO", env="LOG_LEVEL")
 

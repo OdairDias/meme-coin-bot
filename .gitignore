@@ -1,0 +1,22 @@
+# Ambiente e segredos
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Logs e dados locais
+*.csv
+data/positions.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

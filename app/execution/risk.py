@@ -23,7 +23,7 @@ class MemeRiskManager:
         """Carrega estado: positions.json (primeiro) + Redis (daily_loss)."""
         # 1) Posições de data/positions.json (persiste entre reinícios)
         try:
-            from app.execution.positions_persistence import load_positions
+            from app.execution.positions_persistence import load_positions, _use_db
 
             file_positions = load_positions()
             for token, pos in file_positions.items():
@@ -57,7 +57,7 @@ class MemeRiskManager:
                 except Exception as e:
                     logger.debug(f"Posição {token} ignorada: {e}")
             if file_positions:
-                logger.info(f"Carregadas {len(file_positions)} posição(ões) de positions.json")
+        logger.info(f"Carregadas {len(file_positions)} posição(ões) de {'Postgres' if _use_db() else 'positions.json'}")
         except Exception as e:
             logger.warning(f"Erro ao carregar positions.json: {e}")
 
@@ -167,7 +167,27 @@ class MemeRiskManager:
         # Atualizar daily loss
         self.daily_loss += pnl
 
-        # Remover posição (memória + Redis + positions.json)
+        # Histórico em Postgres (quando DATABASE_URL)
+        try:
+            from app.execution.positions_persistence import record_closed_position
+            sym = pos.get("symbol") or token[:8]
+            sym = sym.decode() if isinstance(sym, bytes) else str(sym)
+            record_closed_position(
+                token=token,
+                symbol=sym,
+                entry_price=entry,
+                exit_price=exit_price,
+                quantity=quantity,
+                side=side,
+                opened_at=pos.get("opened_at"),
+                reason=reason,
+                pnl_usd=pnl,
+                pnl_percent=pnl_percent,
+            )
+        except Exception as e:
+            logger.debug(f"record_closed_position: {e}")
+
+        # Remover posição (memória + Redis + positions/Postgres)
         pos_id = f"meme:position:{token}"
         try:
             from app.execution.positions_persistence import remove_position

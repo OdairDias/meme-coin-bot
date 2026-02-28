@@ -2,8 +2,8 @@
 Executor de trades via PumpPortal API + Jupiter V6 (fallback para tokens graduados)
 Documentação: https://pumpportal.fun/local-trading-api/trading-api
 Jupiter: fallback obrigatório para 400 (token migrou Pump→Raydium).
-Saldo real via getTokenAccountBalance antes de vender.
-Erros on-chain: 6005 = bonding curve migrou para Raydium; 6024 = SlippageExceeded/Overflow.
+Saldo real via getTokenAccountBalance antes de vender; sem cache para decisão de venda (evita 6022 e gas).
+Erros on-chain: 6005 = bonding curve migrou para Raydium; 6024 = SlippageExceeded/Overflow; 6022 = Sell zero amount.
 """
 import asyncio
 import base64
@@ -24,6 +24,7 @@ _TX_CONFIRM_POLL_INTERVAL = 2
 # Códigos de erro do programa Pump.fun (on-chain)
 _PUMP_ERR_BONDING_CURVE_COMPLETE = 6005
 _PUMP_ERR_SLIPPAGE_OR_OVERFLOW = 6024
+_PUMP_ERR_SELL_ZERO_AMOUNT = 6022
 
 # Compute units típicos para uma swap (conversão priority fee Helius microlamports → SOL)
 _DEFAULT_CU_SWAP = 200_000
@@ -234,6 +235,8 @@ class Executor:
                 return False, "6005: Bonding curve completou; liquidez migrou para Raydium"
             if code == _PUMP_ERR_SLIPPAGE_OR_OVERFLOW:
                 return False, "6024: Slippage excedido ou Overflow (preço moveu demais)"
+            if code == _PUMP_ERR_SELL_ZERO_AMOUNT:
+                return False, "6022: Sell zero amount (saldo zero na chain)"
             return False, str(err)[:200]
         except Exception as e:
             logger.warning(f"Erro ao confirmar tx {txid[:16]}...: {e}")
@@ -403,25 +406,35 @@ class Executor:
             or "raydium" in err_lower
         )
 
+    def _is_sell_zero_error(self, err: Optional[str]) -> bool:
+        """Detecta erro 6022 (Sell zero amount). Não reenviar tx — fechar posição e evitar mais gas."""
+        if not err:
+            return False
+        return "6022" in err or "sell zero" in err.lower()
+
     def _is_400_or_graduation_error(self, err: Optional[str], status_code: int) -> bool:
         """Qualquer 400 ou erro de graduação → Jupiter fallback."""
         if status_code == 400:
             return True
         return self._is_bonding_curve_error(err)
 
-    async def _get_real_token_balance_raw(self, token_address: str) -> Optional[int]:
-        """Consulta saldo real na blockchain (getTokenAccountsByOwner, ATA, positions.json)."""
+    async def _get_real_token_balance_raw(self, token_address: str, use_fallback: bool = True) -> Optional[int]:
+        """
+        Consulta saldo real na blockchain.
+        use_fallback=False: não usa positions.json (evita vender com saldo 0 e queimar gas em 6022).
+        """
         from app.execution.jupiter_swap import get_token_balance_raw
         from app.execution.positions_persistence import get_position_amount_raw, update_amount_raw
 
         rpc_url = settings.get_rpc_url()
-        fallback = get_position_amount_raw(token_address)
+        fallback = get_position_amount_raw(token_address) if use_fallback else None
         result = await get_token_balance_raw(
             rpc_url, self.wallet_address, token_address, fallback_amount_raw=fallback
         )
         if result:
             amount_raw, _ = result
-            update_amount_raw(token_address, amount_raw)  # cache para próximo fallback
+            if use_fallback:
+                update_amount_raw(token_address, amount_raw)  # cache para próximo fallback
             return amount_raw
         return None
 
@@ -443,12 +456,12 @@ class Executor:
             logger.info(f"[DRY_RUN] SELL {token_address} amount={amount} slippage={slippage}%")
             return True
 
-        # 1) Consultar saldo real quando amount="100%"
+        # 1) Consultar saldo real quando amount="100%" — SEM cache (evita 6022 Sell zero amount e gas queimado)
         amount_to_use = amount
         if amount == "100%" or (isinstance(amount, str) and "100" in str(amount)):
-            balance_raw = await self._get_real_token_balance_raw(token_address)
+            balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
             if not balance_raw or balance_raw <= 0:
-                logger.warning(f"Saldo zero ou conta inexistente para {token_address[:12]}...")
+                logger.warning(f"Saldo zero ou conta inexistente para {token_address[:12]}... (não enviando tx de venda)")
                 raise ValueError("ZERO_BALANCE")
             amount_to_use = "100%"  # PumpPortal aceita "100%"; Jupiter usa balance_raw
 
@@ -473,6 +486,11 @@ class Executor:
             if success:
                 return True
 
+            # 6022 = Sell zero amount: saldo já é 0 na chain — fechar posição sem retentar (evita gas)
+            if self._is_sell_zero_error(error):
+                logger.warning("6022 detectado: saldo zero na chain, fechando posição sem reenviar tx")
+                return True
+
             # 3) Retry PumpPortal com pool=raydium (slippage 20%)
             if pool != "raydium":
                 if self._is_bonding_curve_error(error):
@@ -492,8 +510,14 @@ class Executor:
                     return True
                 error = error2
 
+            # 6022 após retry raydium: não tentar Jupiter (saldo zero)
+            if self._is_sell_zero_error(error):
+                logger.warning("6022 detectado (após raydium): fechando posição sem Jupiter")
+                return True
+
             # 4) Jupiter V6 obrigatório quando PumpPortal falha (400, graduação, etc.)
-            balance_raw = await self._get_real_token_balance_raw(token_address)
+            # Usar apenas saldo on-chain (sem cache) para não enviar venda com 0 e queimar gas (6022)
+            balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
             if balance_raw and balance_raw > 0:
                 logger.info(f"🔄 Jupiter V6: vendendo {token_address[:12]}... (saldo real, slippage 20%)")
                 from app.execution.jupiter_swap import sell_via_jupiter
