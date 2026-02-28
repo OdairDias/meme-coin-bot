@@ -57,7 +57,7 @@ class MemeRiskManager:
                 except Exception as e:
                     logger.debug(f"Posição {token} ignorada: {e}")
             if file_positions:
-        logger.info(f"Carregadas {len(file_positions)} posição(ões) de {'Postgres' if _use_db() else 'positions.json'}")
+                logger.info(f"Carregadas {len(file_positions)} posição(ões) de {'Postgres' if _use_db() else 'positions.json'}")
         except Exception as e:
             logger.warning(f"Erro ao carregar positions.json: {e}")
 
