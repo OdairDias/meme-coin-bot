@@ -1,7 +1,12 @@
 """
 Configurações centralizadas do MemeCoin Bot
 """
-from pydantic import BaseSettings, Field
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    from pydantic import BaseSettings
+
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -57,10 +62,12 @@ class Settings(BaseSettings):
     SOLANA_RPC_URL: str = Field(default="https://api.mainnet-beta.solana.com", env="SOLANA_RPC_URL")
     HELIUS_API_KEY: str | None = Field(default=None, env="HELIUS_API_KEY")
     HELIUS_RPC: str | None = Field(default=None, env="HELIUS_RPC")  # URL completa, ex: https://mainnet.helius-rpc.com/?api-key=XXX
-    # Slippage padrão para compra/venda (%); 15% reduz risco de overflow em picos
-    DEFAULT_SLIPPAGE: float = Field(default=15.0, env="DEFAULT_SLIPPAGE")
+    # Slippage padrão para compra/venda (%); 30% recomendado para sniping na PumpPortal (evita erro 6024)
+    DEFAULT_SLIPPAGE: float = Field(default=30.0, env="DEFAULT_SLIPPAGE")
     # Nível de priority fee para Helius (Min, Low, Medium, High, VeryHigh, UnsafeMax)
-    PRIORITY_FEE_LEVEL: str = Field(default="high", env="PRIORITY_FEE_LEVEL")
+    PRIORITY_FEE_LEVEL: str = Field(default="veryHigh", env="PRIORITY_FEE_LEVEL")
+    # Fallback de Priority Fee em SOL caso não use RPC Helius (0.001 SOL = ~$0.15, super competitivo)
+    PRIORITY_FEE_FALLBACK_SOL: float = Field(default=0.001, env="PRIORITY_FEE_FALLBACK_SOL")
     # Intervalo (s) entre checagens de preço no monitoramento (Jupiter); 15s economiza créditos e é suficiente para SL/TP
     MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=15, env="MONITOR_PRICE_INTERVAL_SECONDS")
     # Ao iniciar: vender tokens na carteira que não estão em positions.json (resíduos)
