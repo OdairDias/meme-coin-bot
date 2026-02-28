@@ -68,6 +68,7 @@ class PositionManager:
                 amount=buy_amount,
                 denominated_in_sol=buy_in_sol,
                 slippage=0,
+                pool=signal.get("pool", "auto"),
             )
             if not success:
                 logger.error(f"Falha ao comprar {signal['symbol']}")

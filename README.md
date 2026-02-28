@@ -126,6 +126,17 @@ memecoin-bot/
 - **Gas:** PumpPortal cobra taxa em SOL por trade (~0.01 SOL)
 - **Rug pulls:** Filtros minimizam, mas não evitam 100%
 
+### Erros on-chain Pump.fun
+
+O bot confirma cada transação na blockchain antes de abrir posição. Se a tx falhar:
+
+| Código | Significado | O que o bot faz |
+|--------|-------------|------------------|
+| **6005** | Bonding curve completou; liquidez migrou para Raydium | Não abre posição; evita comprar token já graduado. Tokens com `pool=raydium` no WebSocket são ignorados antes de analisar. |
+| **6024** | Slippage excedido ou Overflow (preço moveu demais) | Não abre posição. Aumente `DEFAULT_SLIPPAGE` no `.env` (ex.: `35` ou `40`) e use `PRIORITY_FEE_LEVEL=veryHigh` para reduzir ocorrências. |
+
+**Entrada via Raydium:** Se o sinal foi gerado na Pump.fun mas o token já migrou para Raydium (`pool=raydium` no WebSocket), o bot **não perde a entrada**: analisa do mesmo jeito e, ao dar sinal, compra com `pool=raydium` na API PumpPortal. A venda já usa Jupiter/Raydium quando necessário.
+
 ## 🧪 Testes
 
 1. Dry-run por 24h: observe sinais gerados, postura da estratégia, logs

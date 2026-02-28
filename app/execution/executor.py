@@ -3,16 +3,27 @@ Executor de trades via PumpPortal API + Jupiter V6 (fallback para tokens graduad
 Documentação: https://pumpportal.fun/local-trading-api/trading-api
 Jupiter: fallback obrigatório para 400 (token migrou Pump→Raydium).
 Saldo real via getTokenAccountBalance antes de vender.
+Erros on-chain: 6005 = bonding curve migrou para Raydium; 6024 = SlippageExceeded/Overflow.
 """
+import asyncio
 import base64
+import time
 import httpx
-from typing import Dict, Any, Union, Optional
+from typing import Dict, Any, Union, Optional, Tuple
 
 from app.core.config import settings
 from app.core.security import get_wallet_keypair
 from app.core.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Tempo máximo para aguardar confirmação da tx (segundos)
+_TX_CONFIRM_TIMEOUT = 45
+# Intervalo entre polls de status (segundos)
+_TX_CONFIRM_POLL_INTERVAL = 2
+# Códigos de erro do programa Pump.fun (on-chain)
+_PUMP_ERR_BONDING_CURVE_COMPLETE = 6005
+_PUMP_ERR_SLIPPAGE_OR_OVERFLOW = 6024
 
 # Compute units típicos para uma swap (conversão priority fee Helius microlamports → SOL)
 _DEFAULT_CU_SWAP = 200_000
@@ -140,6 +151,94 @@ class Executor:
             logger.error(f"Erro ao assinar/enviar tx: {e}", exc_info=True)
             return None
 
+    def _parse_tx_error_code(self, meta_err: Any) -> Optional[int]:
+        """
+        Extrai código de erro custom (ex: 6005, 6024) de meta.err da transação.
+        meta.err pode ser: null, {"InstructionError": [index, {"Custom": code}]}, ou string.
+        """
+        if meta_err is None:
+            return None
+        if isinstance(meta_err, dict):
+            instr_err = meta_err.get("InstructionError")
+            if isinstance(instr_err, (list, tuple)) and len(instr_err) >= 2:
+                inner = instr_err[1]
+                if isinstance(inner, dict) and "Custom" in inner:
+                    return int(inner["Custom"])
+        return None
+
+    async def _confirm_tx(self, txid: str) -> Tuple[bool, Optional[str]]:
+        """
+        Aguarda a tx ser finalizada e verifica se executou com sucesso.
+        Retorna (True, None) se sucesso, (False, mensagem) se falhou on-chain (ex: 6005, 6024).
+        """
+        rpc_url = settings.get_rpc_url()
+        deadline = time.monotonic() + _TX_CONFIRM_TIMEOUT
+        while time.monotonic() < deadline:
+            try:
+                body = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getSignatureStatuses",
+                    "params": [[txid]],
+                }
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.post(rpc_url, json=body)
+                    r.raise_for_status()
+                    data = r.json()
+                if "error" in data:
+                    await asyncio.sleep(_TX_CONFIRM_POLL_INTERVAL)
+                    continue
+                result = data.get("result", {})
+                value = (result.get("value") or [None])[0]
+                if value is None:
+                    await asyncio.sleep(_TX_CONFIRM_POLL_INTERVAL)
+                    continue
+                confirmation_status = (value.get("confirmationStatus") or "").lower()
+                if confirmation_status == "finalized":
+                    break
+                if value.get("err") is not None:
+                    # Tx já rejeitada; buscar detalhe via getTransaction
+                    break
+                await asyncio.sleep(_TX_CONFIRM_POLL_INTERVAL)
+            except Exception as e:
+                logger.debug(f"getSignatureStatuses: {e}")
+                await asyncio.sleep(_TX_CONFIRM_POLL_INTERVAL)
+
+        try:
+            body = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTransaction",
+                "params": [
+                    txid,
+                    {"encoding": "json", "maxSupportedTransactionVersion": 0},
+                ],
+            }
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.post(rpc_url, json=body)
+                r.raise_for_status()
+                data = r.json()
+            if "error" in data:
+                return False, data.get("error", {}).get("message", "RPC error")
+            result = data.get("result")
+            if not result:
+                return False, "Tx não encontrada (timeout ou não finalizada)"
+            meta = result.get("meta")
+            if not meta:
+                return True, None
+            err = meta.get("err")
+            if err is None:
+                return True, None
+            code = self._parse_tx_error_code(err)
+            if code == _PUMP_ERR_BONDING_CURVE_COMPLETE:
+                return False, "6005: Bonding curve completou; liquidez migrou para Raydium"
+            if code == _PUMP_ERR_SLIPPAGE_OR_OVERFLOW:
+                return False, "6024: Slippage excedido ou Overflow (preço moveu demais)"
+            return False, str(err)[:200]
+        except Exception as e:
+            logger.warning(f"Erro ao confirmar tx {txid[:16]}...: {e}")
+            return False, str(e)[:200]
+
     async def _execute(
         self,
         action: str,
@@ -202,10 +301,15 @@ class Executor:
 
             if _is_trade_local() and response.content:
                 txid = await self._sign_and_send_tx(response.content)
-                if txid:
+                if not txid:
+                    return False, "Falha ao assinar/enviar tx"
+                logger.info(f"⏳ Aguardando confirmação on-chain da tx {txid[:20]}...")
+                confirmed, confirm_err = await self._confirm_tx(txid)
+                if confirmed:
                     logger.info(f"✅ {action.upper()} executada: {token_address} tx={txid}")
                     return True, None
-                return False, "Falha ao assinar/enviar tx"
+                logger.error(f"❌ {action.upper()} falhou on-chain: {confirm_err}")
+                return False, confirm_err or "Tx falhou na blockchain"
 
         except httpx.HTTPStatusError as e:
             err_msg = str(e.response.text)[:200] if e.response else str(e)
@@ -235,6 +339,9 @@ class Executor:
             unit = "SOL" if denominated_in_sol else "tokens"
             logger.info(f"[DRY_RUN] BUY {token_address} amount={amount} {unit} slippage={slippage}%")
             return True
+
+        if (pool or "auto").lower() == "raydium":
+            logger.info(f"🔄 Compra via Raydium (token já migrado da bonding curve): {token_address[:12]}...")
 
         # Memecoins requerem um slippage mais solto para compra inicial. Vamos garantir ao menos 15%.
         def_slippage = getattr(settings, 'DEFAULT_SLIPPAGE', 15.0)

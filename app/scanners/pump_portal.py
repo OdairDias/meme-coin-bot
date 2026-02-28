@@ -169,12 +169,15 @@ class PumpPortalScanner:
             "dev_holding_percent": float(data.get("dev_holding_percent", 0)),
             "snipers": data.get("snipers_count", data.get("snipers", 0)),
             "created_at": data.get("created_at", datetime.now(timezone.utc).isoformat()),
+            "pool": (data.get("pool") or "").strip().lower(),
             "raw": data,
         }
 
     async def _handle_new_token(self, token_data: Dict[str, Any]):
         """Processa dados de um novo token e dispara callbacks."""
         # Normalizar dados
+        pool = (token_data.get("pool") or "").strip().lower()
+        on_bonding_curve = pool != "raydium"
         normalized = {
             "address": token_data.get("mint"),  # contract address
             "symbol": token_data.get("symbol", "UNKNOWN"),
@@ -185,6 +188,8 @@ class PumpPortalScanner:
             "dev_holding_percent": float(token_data.get("dev_holding_percent", 0)),
             "snipers_count": int(token_data.get("snipers", 0)),
             "created_at": token_data.get("created_at", datetime.now(timezone.utc).isoformat()),
+            "pool": pool,
+            "on_bonding_curve": on_bonding_curve,
             "raw": token_data
         }
 

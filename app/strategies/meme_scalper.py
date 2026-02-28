@@ -155,6 +155,7 @@ class MemeScalperStrategy:
                 "strategy": "meme_scalper",
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+                "pool": "raydium" if asset.get("on_bonding_curve") is False else "auto",
                 "metadata": {
                     "market_cap": asset.get("market_cap"),
                     "volume_24h": asset.get("volume_24h"),
