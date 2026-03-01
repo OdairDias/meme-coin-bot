@@ -62,8 +62,10 @@ class Settings(BaseSettings):
     SOLANA_RPC_URL: str = Field(default="https://api.mainnet-beta.solana.com", env="SOLANA_RPC_URL")
     HELIUS_API_KEY: str | None = Field(default=None, env="HELIUS_API_KEY")
     HELIUS_RPC: str | None = Field(default=None, env="HELIUS_RPC")  # URL completa, ex: https://mainnet.helius-rpc.com/?api-key=XXX
-    # Slippage padrão para compra/venda (%); 40% para não perder entrada (melhor pagar taxa que perder trade). Ver docs/SLIPPAGE_E_TAXAS.md
+    # Slippage padrão para compra (%). Ver docs/SLIPPAGE_E_TAXAS.md
     DEFAULT_SLIPPAGE: float = Field(default=30.0, env="DEFAULT_SLIPPAGE")
+    # Se True, usa entry_price conservador (preço_sinal × (1 + DEFAULT_SLIPPAGE/100)) para SL/TP refletirem custo real
+    USE_CONSERVATIVE_ENTRY: bool = Field(default=True, env="USE_CONSERVATIVE_ENTRY")
     # Nível de priority fee para Helius (Min, Low, Medium, High, VeryHigh, UnsafeMax)
     PRIORITY_FEE_LEVEL: str = Field(default="veryHigh", env="PRIORITY_FEE_LEVEL")
     # Fallback de Priority Fee em SOL caso não use RPC Helius (0.001 SOL = ~$0.15, super competitivo)

@@ -74,25 +74,33 @@ class PositionManager:
                 logger.error(f"Falha ao comprar {signal['symbol']}")
                 return False
 
+            # Entry price para SL/TP: conservador = preço_sinal × (1 + slippage%) para alinhar com custo real
+            signal_entry = signal["entry_price"]
+            if getattr(settings, "USE_CONSERVATIVE_ENTRY", True):
+                entry_for_sl_tp = signal_entry * (1.0 + settings.DEFAULT_SLIPPAGE / 100.0)
+                logger.debug(f"Entry conservador: {signal_entry:.6f} → {entry_for_sl_tp:.6f} (+{settings.DEFAULT_SLIPPAGE}%)")
+            else:
+                entry_for_sl_tp = signal_entry
+
             # Registrar posição (quantity="100%" quando buy_in_sol para vender tudo)
             qty_for_record = "100%" if buy_in_sol else signal["quantity"]
             await self.risk_manager.record_position_open(
                 token=signal["address"],
-                entry_price=signal["entry_price"],
+                entry_price=entry_for_sl_tp,
                 quantity=qty_for_record,
                 side="BUY",
                 symbol=signal.get("symbol", ""),
             )
 
             log_qty = f"{buy_amount} SOL" if buy_in_sol else f"qty={signal['quantity']:.6f}"
-            logger.info(f"✅ Posição aberta: {signal['symbol']} {log_qty} @ ${signal['entry_price']:.6f}")
+            logger.info(f"✅ Posição aberta: {signal['symbol']} {log_qty} @ ${entry_for_sl_tp:.6f} (custo ref)")
             if self.alerter:
                 try:
                     qty_alert = buy_amount if buy_in_sol else signal["quantity"]
                     await self.alerter.send_trade(
                         symbol=signal["symbol"],
                         side="BUY",
-                        price=signal["entry_price"],
+                        price=entry_for_sl_tp,
                         quantity=qty_alert,
                     )
                 except Exception as e:
