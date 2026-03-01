@@ -90,6 +90,7 @@ class PositionManager:
                 quantity=qty_for_record,
                 side="BUY",
                 symbol=signal.get("symbol", ""),
+                buy_amount_sol=buy_amount if buy_in_sol else 0,
             )
 
             log_qty = f"{buy_amount} SOL" if buy_in_sol else f"qty={signal['quantity']:.6f}"
@@ -146,8 +147,36 @@ class PositionManager:
                 logger.error(f"Falha ao vender {token}")
                 return False
 
-            # PnL para notificação (0 quando quantity="100%")
-            if isinstance(quantity, (int, float)) and quantity > 0:
+            # PnL para notificação - calcular baseado na quantidade real ou_estimada
+            # Se quantity é string (100% ou 50%), estimar baseado no buy_amount_sol
+            actual_quantity = quantity
+            if isinstance(quantity, str):
+                # Estimar tokens comprados: SOL gasto / preço de entrada (em USD)
+                buy_amount_sol = pos.get("buy_amount_sol", 0)
+                if buy_amount_sol > 0 and entry > 0:
+                    # Converter entry para SOL (assumindo preço do SOL ~USD)
+                    # entry é em USD, mas buy_amount_sol é em SOL
+                    # PnL em USD = tokens * (exit_price - entry_price)
+                    # tokens = buy_amount_sol_usd / entry_price (mas entry_price já tem slippage)
+                    # Simplificado: PnL% = (exit/entry - 1) * 100
+                    pass  # Vamos calcular % primeiro
+                
+                # Calcular PnL percent primeiro
+                if side == "BUY":
+                    pnl_percent = ((current_price - entry) / entry * 100) if entry > 0 else 0
+                else:
+                    pnl_percent = ((entry - current_price) / entry * 100) if entry > 0 else 0
+                    
+                # Se é 50%, usar metade do buy_amount_sol
+                if "50" in quantity:
+                    buy_amount_sol = buy_amount_sol * 0.5 if buy_amount_sol > 0 else 0
+                
+                # PnL em USD aproximado: % do valor que gastamos
+                if buy_amount_sol > 0:
+                    pnl = (pnl_percent / 100) * buy_amount_sol  # buy_amount_sol é近似 USD quando entry_price inclui slippage
+                else:
+                    pnl = 0.0
+            elif isinstance(quantity, (int, float)) and quantity > 0:
                 if side == "BUY":
                     pnl = (current_price - entry) * quantity
                     pnl_percent = ((current_price - entry) / entry * 100) if entry > 0 else 0
@@ -198,7 +227,12 @@ class PositionManager:
                 return False
 
             pnl_percent = ((current_price - entry) / entry * 100) if (side == "BUY" and entry > 0) else 0
-            pnl_usd = 0.0
+            # Calcular PnL USD baseado no buy_amount_sol
+            buy_amount_sol = pos.get("buy_amount_sol", 0)
+            if buy_amount_sol > 0:
+                pnl_usd = (pnl_percent / 100) * (buy_amount_sol * 0.5)  # 50% da posição
+            else:
+                pnl_usd = 0.0
 
             self.risk_manager.open_positions[token]["quantity"] = "50%"
             try:

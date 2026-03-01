@@ -131,12 +131,17 @@ class MemeScalperStrategy:
                 buy_amount_sol = 0
                 buy_in_sol = False
 
-            # Stop loss
-            stop_price = current_price * (1 - settings.STOP_LOSS_PERCENT / 100)
-
-            # Take profits
-            tp1_price = current_price * (1 + settings.TAKE_PROFIT_PERCENT1 / 100)
-            tp2_price = current_price * (1 + settings.TAKE_PROFIT_PERCENT2 / 100)
+            # Stop loss e Take profits: usar preço conservador (com slippage) para alinhar com custo real
+            # Isso garante que SL/TP sejam atingidos baseado no preço que você REALMENTE pagou
+            slippage_factor = 1.0 + (getattr(settings, 'DEFAULT_SLIPPAGE', 30.0) / 100.0)
+            conservative_entry = current_price * slippage_factor
+            
+            # Stop loss: baseado no preço conservador
+            stop_price = conservative_entry * (1 - settings.STOP_LOSS_PERCENT / 100)
+            
+            # Take profits: baseados no preço conservador
+            tp1_price = conservative_entry * (1 + settings.TAKE_PROFIT_PERCENT1 / 100)
+            tp2_price = conservative_entry * (1 + settings.TAKE_PROFIT_PERCENT2 / 100)
 
             signal = {
                 "symbol": asset["symbol"],

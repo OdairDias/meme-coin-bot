@@ -102,7 +102,7 @@ class MemeRiskManager:
 
         return validation
 
-    async def record_position_open(self, token: str, entry_price: float, quantity: float | str, side: str = "BUY", symbol: str = ""):
+    async def record_position_open(self, token: str, entry_price: float, quantity: float | str, side: str = "BUY", symbol: str = "", buy_amount_sol: float = 0):
         """Registra nova posição aberta (memória + Redis + positions.json)."""
         pos_id = f"meme:position:{token}"
         position = {
@@ -114,7 +114,8 @@ class MemeRiskManager:
             "opened_at": datetime.now(timezone.utc).isoformat(),
             "current_price": entry_price,
             "pnl": 0.0,
-            "pnl_percent": 0.0
+            "pnl_percent": 0.0,
+            "buy_amount_sol": buy_amount_sol,  # Quanto gastamos em SOL (para calcular PnL real)
         }
 
         # Persistência em positions.json (sobrevive reinício)
@@ -152,7 +153,9 @@ class MemeRiskManager:
         entry = pos["entry_price"]
         quantity = pos["quantity"]
         side = pos["side"]
+        buy_amount_sol = pos.get("buy_amount_sol", 0)
 
+        # Calcular PnL - usar buy_amount_sol quando quantity é string
         if isinstance(quantity, (int, float)) and quantity > 0:
             if side == "BUY":
                 pnl = (exit_price - entry) * quantity
@@ -160,6 +163,13 @@ class MemeRiskManager:
             else:
                 pnl = (entry - exit_price) * quantity
                 pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
+        elif isinstance(quantity, str) and buy_amount_sol > 0:
+            # Calcular PnL baseado no valor gasto e % de ganho
+            if side == "BUY":
+                pnl_percent = ((exit_price - entry) / entry) * 100 if entry > 0 else 0
+            else:
+                pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
+            pnl = (pnl_percent / 100) * buy_amount_sol
         else:
             pnl = 0.0
             pnl_percent = 0.0
