@@ -235,10 +235,10 @@ class MemeRiskManager:
         if pnl_percent >= settings.TAKE_PROFIT_PERCENT2:
             return "TAKE_PROFIT_FULL"
 
-        # Take profit 1 (parcial) — implementar lógica de parcial depois
-        if pnl_percent >= settings.TAKE_PROFIT_PERCENT1:
-            # Por enquanto, só retorna TP1 se não tiver fechado parcial antes
-            # Precisamos de campo 'partial_taken' na posição
+        # Take profit 1 (parcial): só dispara se ainda temos 100% (não fechamos parcial antes)
+        qty = pos.get("quantity", "100%")
+        is_full_position = qty == "100%" or (isinstance(qty, str) and "100" in qty)
+        if is_full_position and pnl_percent >= settings.TAKE_PROFIT_PERCENT1:
             return "TAKE_PROFIT_PARTIAL"
 
         # Timeout

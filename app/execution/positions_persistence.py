@@ -139,6 +139,22 @@ def get_position_amount_raw(token: str) -> Optional[int]:
     return pos.get("amount_raw")
 
 
+def update_position_quantity(token: str, quantity: str | float) -> None:
+    """Atualiza quantity da posição (ex.: após fechamento parcial 50% → '50%')."""
+    if _use_db():
+        try:
+            from app.db.postgres import update_quantity_in_db
+            update_quantity_in_db(token, quantity)
+            return
+        except Exception as e:
+            logger.warning(f"Erro ao atualizar quantity no Postgres: {e}")
+    positions = load_positions()
+    if token in positions:
+        positions[token]["quantity"] = quantity if isinstance(quantity, str) else str(quantity)
+        save_positions(positions)
+        logger.debug(f"Quantity atualizada em positions.json: {token[:12]}... → {quantity}")
+
+
 def record_closed_position(
     token: str,
     symbol: str,

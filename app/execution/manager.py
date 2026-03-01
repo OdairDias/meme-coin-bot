@@ -173,6 +173,75 @@ class PositionManager:
             logger.error(f"Erro ao fechar posição {token}: {e}", exc_info=True)
             return False
 
+    async def _partial_close_position(self, token: str) -> bool:
+        """Fecha 50% da posição (take profit parcial). Mantém a posição com quantity=50%."""
+        if token not in self.risk_manager.open_positions:
+            logger.warning(f"Posição não encontrada para parcial: {token}")
+            return False
+
+        pos = self.risk_manager.open_positions[token]
+        current_price = pos.get("current_price", pos["entry_price"])
+        entry = pos["entry_price"]
+        side = pos.get("side", "BUY")
+        symbol = pos.get("symbol") or token[:8]
+        symbol = symbol.decode() if isinstance(symbol, bytes) else str(symbol)
+
+        try:
+            success = await self.executor.sell(
+                token_address=token,
+                amount="50%",
+                denominated_in_sol=False,
+                slippage=0,
+            )
+            if not success:
+                logger.error(f"Falha ao vender 50% de {token}")
+                return False
+
+            pnl_percent = ((current_price - entry) / entry * 100) if (side == "BUY" and entry > 0) else 0
+            pnl_usd = 0.0
+
+            self.risk_manager.open_positions[token]["quantity"] = "50%"
+            try:
+                from app.execution.positions_persistence import update_position_quantity
+                update_position_quantity(token, "50%")
+            except Exception as e:
+                logger.warning(f"Erro ao persistir quantity 50%: {e}")
+
+            try:
+                from app.execution.positions_persistence import record_closed_position
+                record_closed_position(
+                    token=token,
+                    symbol=symbol,
+                    entry_price=entry,
+                    exit_price=current_price,
+                    quantity="50%",
+                    side=side,
+                    opened_at=pos.get("opened_at"),
+                    reason="TAKE_PROFIT_PARTIAL",
+                    pnl_usd=pnl_usd,
+                    pnl_percent=pnl_percent,
+                )
+            except Exception as e:
+                logger.debug(f"record_closed_position (parcial): {e}")
+
+            logger.info(f"✅ Fechamento parcial: {token} 50% vendido @ ${current_price:.6f} (gain ~{pnl_percent:.1f}%)")
+            if self.alerter:
+                try:
+                    await self.alerter.send_position_closed(symbol, pnl_usd, pnl_percent, "TAKE_PROFIT_PARTIAL")
+                except Exception as e:
+                    logger.debug(f"Telegram (parcial): {e}")
+            return True
+
+        except ValueError as e:
+            if str(e) == "ZERO_BALANCE":
+                logger.warning(f"Saldo zero para parcial {token}, fechando posição inteira.")
+                await self.close_position(token, reason="TAKE_PROFIT_PARTIAL_ZERO_BALANCE")
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"Erro no fechamento parcial {token}: {e}", exc_info=True)
+            return False
+
     async def _monitor_loop(self):
         """Loop que monitora preços (DexScreener primário, Jupiter fallback) e verifica SL/TP/timeout."""
         interval = max(5, settings.MONITOR_PRICE_INTERVAL_SECONDS)
@@ -195,7 +264,10 @@ class PositionManager:
                     exit_reason = self.risk_manager.check_exit_conditions(token, current_price)
                     if exit_reason:
                         logger.info(f"🔍 Condição de saída para {token}: {exit_reason}")
-                        await self.close_position(token, reason=exit_reason)
+                        if exit_reason == "TAKE_PROFIT_PARTIAL":
+                            await self._partial_close_position(token)
+                        else:
+                            await self.close_position(token, reason=exit_reason)
 
             except asyncio.CancelledError:
                 break

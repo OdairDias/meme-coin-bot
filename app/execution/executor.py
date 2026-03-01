@@ -456,14 +456,26 @@ class Executor:
             logger.info(f"[DRY_RUN] SELL {token_address} amount={amount} slippage={slippage}%")
             return True
 
-        # 1) Consultar saldo real quando amount="100%" — SEM cache (evita 6022 Sell zero amount e gas queimado)
+        # 1) Resolver amount: 100% = saldo total; 50% = metade do saldo (parcial)
         amount_to_use = amount
+        amount_raw_to_sell: Optional[int] = None  # para Jupiter fallback quando vendemos % do saldo
         if amount == "100%" or (isinstance(amount, str) and "100" in str(amount)):
             balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
             if not balance_raw or balance_raw <= 0:
                 logger.warning(f"Saldo zero ou conta inexistente para {token_address[:12]}... (não enviando tx de venda)")
                 raise ValueError("ZERO_BALANCE")
-            amount_to_use = "100%"  # PumpPortal aceita "100%"; Jupiter usa balance_raw
+            amount_to_use = "100%"
+            amount_raw_to_sell = balance_raw
+        elif amount == "50%" or (isinstance(amount, str) and "50" in str(amount)):
+            balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
+            if not balance_raw or balance_raw <= 0:
+                logger.warning(f"Saldo zero para venda parcial {token_address[:12]}...")
+                raise ValueError("ZERO_BALANCE")
+            amount_raw_to_sell = balance_raw // 2
+            if amount_raw_to_sell <= 0:
+                logger.warning(f"Saldo insuficiente para venda 50%: {token_address[:12]}...")
+                raise ValueError("ZERO_BALANCE")
+            amount_to_use = "50%"  # PumpPortal aceita "50%"; Jupiter usa amount_raw_to_sell
 
         slippage_first = 10.0  # 10% primeira tentativa
         slippage = slippage if slippage > 0 else slippage_first
@@ -516,17 +528,18 @@ class Executor:
                 return True
 
             # 4) Jupiter V6 obrigatório quando PumpPortal falha (400, graduação, etc.)
-            # Usar apenas saldo on-chain (sem cache) para não enviar venda com 0 e queimar gas (6022)
-            balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
-            if balance_raw and balance_raw > 0:
-                logger.info(f"🔄 Jupiter V6: vendendo {token_address[:12]}... (saldo real, slippage 20%)")
+            # Usar amount_raw_to_sell (já definido para 100% ou 50%) ou buscar saldo de novo
+            if amount_raw_to_sell is None:
+                amount_raw_to_sell = await self._get_real_token_balance_raw(token_address, use_fallback=False)
+            if amount_raw_to_sell and amount_raw_to_sell > 0:
+                logger.info(f"🔄 Jupiter V6: vendendo {token_address[:12]}... (amount_raw, slippage 20%)")
                 from app.execution.jupiter_swap import sell_via_jupiter
 
                 ok, _ = await sell_via_jupiter(
                     self.wallet_address,
                     self.wallet_kp,
                     token_address,
-                    balance_raw,
+                    amount_raw_to_sell,
                     slippage_bps=2000,  # 20%
                 )
                 return ok

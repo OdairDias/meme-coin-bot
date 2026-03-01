@@ -166,6 +166,24 @@ def update_amount_raw_in_db(token: str, amount_raw: int) -> bool:
         return False
 
 
+def update_quantity_in_db(token: str, quantity: str | float) -> bool:
+    """Atualiza quantity da posição (ex.: após parcial '50%')."""
+    conn = _get_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE positions SET quantity = %s WHERE token = %s", (str(quantity), token))
+        conn.commit()
+        logger.debug(f"Quantity atualizada no Postgres: {token[:12]}... → {quantity}")
+        return True
+    except Exception as e:
+        logger.warning(f"update_quantity_in_db: {e}")
+        if conn:
+            conn.rollback()
+        return False
+
+
 def get_position_amount_raw_from_db(token: str) -> Optional[int]:
     """Retorna amount_raw da posição (para fallback Jupiter)."""
     conn = _get_connection()
