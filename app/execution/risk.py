@@ -169,7 +169,18 @@ class MemeRiskManager:
                 pnl_percent = ((exit_price - entry) / entry) * 100 if entry > 0 else 0
             else:
                 pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
-            pnl = (pnl_percent / 100) * buy_amount_sol
+            # Converter buy_amount_sol de SOL para USD
+            sol_price_usd = 0.0
+            try:
+                from app.scanners.jupiter import get_sol_price_usd
+                import asyncio
+                sol_price_usd = asyncio.get_event_loop().run_until_complete(get_sol_price_usd())
+            except Exception as e:
+                logger.warning(f"Erro ao buscar preço SOL, usando fallback: {e}")
+                sol_price_usd = 40.0  # Fallback ~$40/SOL
+            
+            buy_amount_usd = buy_amount_sol * sol_price_usd
+            pnl = (pnl_percent / 100) * buy_amount_usd
         else:
             pnl = 0.0
             pnl_percent = 0.0
@@ -241,15 +252,16 @@ class MemeRiskManager:
         if pnl_percent <= -settings.STOP_LOSS_PERCENT:
             return "STOP_LOSS"
 
-        # Take profit 2
-        if pnl_percent >= settings.TAKE_PROFIT_PERCENT2:
-            return "TAKE_PROFIT_FULL"
-
         # Take profit 1 (parcial): só dispara se ainda temos 100% (não fechamos parcial antes)
+        # Verificar ANTES do TP2 para garantir que 50% seja vendido no TP1
         qty = pos.get("quantity", "100%")
         is_full_position = qty == "100%" or (isinstance(qty, str) and "100" in qty)
         if is_full_position and pnl_percent >= settings.TAKE_PROFIT_PERCENT1:
             return "TAKE_PROFIT_PARTIAL"
+
+        # Take profit 2 (full): só após TP1 ter fechado 50%
+        if pnl_percent >= settings.TAKE_PROFIT_PERCENT2:
+            return "TAKE_PROFIT_FULL"
 
         # Timeout
         opened_at = pos["opened_at"]

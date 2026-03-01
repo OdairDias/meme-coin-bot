@@ -151,29 +151,31 @@ class PositionManager:
             # Se quantity é string (100% ou 50%), estimar baseado no buy_amount_sol
             actual_quantity = quantity
             if isinstance(quantity, str):
-                # Estimar tokens comprados: SOL gasto / preço de entrada (em USD)
-                buy_amount_sol = pos.get("buy_amount_sol", 0)
-                if buy_amount_sol > 0 and entry > 0:
-                    # Converter entry para SOL (assumindo preço do SOL ~USD)
-                    # entry é em USD, mas buy_amount_sol é em SOL
-                    # PnL em USD = tokens * (exit_price - entry_price)
-                    # tokens = buy_amount_sol_usd / entry_price (mas entry_price já tem slippage)
-                    # Simplificado: PnL% = (exit/entry - 1) * 100
-                    pass  # Vamos calcular % primeiro
-                
                 # Calcular PnL percent primeiro
                 if side == "BUY":
                     pnl_percent = ((current_price - entry) / entry * 100) if entry > 0 else 0
                 else:
                     pnl_percent = ((entry - current_price) / entry * 100) if entry > 0 else 0
-                    
-                # Se é 50%, usar metade do buy_amount_sol
-                if "50" in quantity:
-                    buy_amount_sol = buy_amount_sol * 0.5 if buy_amount_sol > 0 else 0
                 
-                # PnL em USD aproximado: % do valor que gastamos
-                if buy_amount_sol > 0:
-                    pnl = (pnl_percent / 100) * buy_amount_sol  # buy_amount_sol é近似 USD quando entry_price inclui slippage
+                # Converter buy_amount_sol de SOL para USD
+                buy_amount_sol = pos.get("buy_amount_sol", 0)
+                sol_price_usd = 40.0  # Fallback
+                try:
+                    from app.scanners.jupiter import get_sol_price_usd
+                    import asyncio
+                    sol_price_usd = asyncio.get_event_loop().run_until_complete(get_sol_price_usd())
+                except Exception:
+                    pass
+                
+                buy_amount_usd = buy_amount_sol * sol_price_usd
+                
+                # Se é 50%, usar metade
+                if "50" in quantity:
+                    buy_amount_usd = buy_amount_usd * 0.5
+                
+                # PnL em USD: % do valor que gastamos em USD
+                if buy_amount_usd > 0:
+                    pnl = (pnl_percent / 100) * buy_amount_usd
                 else:
                     pnl = 0.0
             elif isinstance(quantity, (int, float)) and quantity > 0:
@@ -227,10 +229,19 @@ class PositionManager:
                 return False
 
             pnl_percent = ((current_price - entry) / entry * 100) if (side == "BUY" and entry > 0) else 0
-            # Calcular PnL USD baseado no buy_amount_sol
+            # Calcular PnL USD baseado no buy_amount_sol (converter SOL -> USD)
             buy_amount_sol = pos.get("buy_amount_sol", 0)
+            sol_price_usd = 40.0  # Fallback
+            try:
+                from app.scanners.jupiter import get_sol_price_usd
+                import asyncio
+                sol_price_usd = asyncio.get_event_loop().run_until_complete(get_sol_price_usd())
+            except Exception:
+                pass
+            
             if buy_amount_sol > 0:
-                pnl_usd = (pnl_percent / 100) * (buy_amount_sol * 0.5)  # 50% da posição
+                buy_amount_usd = buy_amount_sol * sol_price_usd
+                pnl_usd = (pnl_percent / 100) * (buy_amount_usd * 0.5)  # 50% da posição
             else:
                 pnl_usd = 0.0
 
