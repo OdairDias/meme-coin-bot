@@ -46,12 +46,7 @@ async def lifespan(app: FastAPI):
     pump_scanner = PumpPortalScanner()
     birdeye = BirdeyeScanner()
 
-    # 2) Inicializar executor e risk manager
-    executor = Executor()
-    risk_manager = MemeRiskManager()
-    alerter = TelegramAlerter()
-
-    # 2b) Postgres: criar tabelas se DATABASE_URL definido (Railway)
+    # 2) Postgres: criar tabelas ANTES de carregar posições (evita "column token does not exist")
     if getattr(settings, "DATABASE_URL", None) and str(settings.DATABASE_URL or "").strip():
         try:
             from app.db.postgres import init_schema
@@ -60,14 +55,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Postgres init: {e}")
 
-    # 3) Inicializar strategy
-    strategy = MemeScalperStrategy(birdeye)
+    # 3) Inicializar executor e risk manager (risk carrega posições do DB/JSON)
+    executor = Executor()
+    risk_manager = MemeRiskManager()
+    alerter = TelegramAlerter()
 
-    # 4) Registrar callback do scanner
+    # 4) Inicializar strategy e registrar callback do scanner
+    strategy = MemeScalperStrategy(birdeye)
     async def on_new_token(token_data: dict):
         """Processa novo token do PumpPortal (com delay para OHLCV na Bitquery/Birdeye)."""
         # Tokens já migrados (pool=raydium) continuam sendo analisados; a compra será feita via pool=raydium
-        # Pré-filtro: market cap mínimo (45 SOL)
+        # Pré-filtro: market cap mínimo (50 SOL)
         market_cap = token_data.get("market_cap", 0) or 0
         min_mc = settings.MIN_MARKET_CAP_SOL
         if market_cap > 0 and market_cap < min_mc:
