@@ -1,6 +1,6 @@
 """
 Jupiter Swap V6 — Venda de tokens para SOL (Pump.fun e Raydium)
-Usado como fallback quando PumpPortal retorna 400 (token graduado).
+Fallback quando PumpPortal retorna 400 (token graduado).
 API: https://quote-api.jup.ag/v6/quote e https://api.jup.ag/swap/v1/swap
 """
 import base64
@@ -15,7 +15,6 @@ from app.core.logger import setup_logger
 logger = setup_logger(__name__)
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
-# Quote v6 e Swap v1 (compatíveis)
 JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
 JUPITER_SWAP_URL = "https://api.jup.ag/swap/v1/swap"
 ATO_PROGRAM = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
@@ -45,26 +44,19 @@ async def get_token_balance_raw(
     4) fallback_amount_raw (ex: positions.json) como último recurso
     Retorna (amount_raw, decimals) ou None.
     """
-    # 1) getTokenAccountsByOwner com filtro mint — encontra conta independente de ATA
+    # 1) getTokenAccountsByOwner com filtro mint
     try:
         body = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getTokenAccountsByOwner",
-            "params": [
-                wallet_pubkey,
-                {"mint": mint},
-                {"encoding": "jsonParsed"},
-            ],
+            "params": [wallet_pubkey, {"mint": mint}, {"encoding": "jsonParsed"}],
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(rpc_url, json=body)
             r.raise_for_status()
             data = r.json()
-
-        if "error" in data:
-            logger.debug(f"getTokenAccountsByOwner erro: {data['error']}")
-        else:
+        if "error" not in data:
             total_raw = 0
             decimals = 6
             for item in data.get("result", {}).get("value", []):
@@ -81,29 +73,24 @@ async def get_token_balance_raw(
             if total_raw > 0:
                 return total_raw, decimals
     except Exception as e:
-        logger.debug(f"getTokenAccountsByOwner erro: {e}")
+        logger.debug(f"getTokenAccountsByOwner: {e}")
 
     # 2) getTokenAccountBalance na ATA derivada
     try:
         owner = Pubkey.from_string(wallet_pubkey)
         mint_pk = Pubkey.from_string(mint)
         ata = get_associated_token_address(owner, mint_pk)
-        ata_str = str(ata)
-
         body = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getTokenAccountBalance",
-            "params": [ata_str],
+            "params": [str(ata)],
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(rpc_url, json=body)
             r.raise_for_status()
             data = r.json()
-
-        if "error" in data:
-            logger.debug(f"getTokenAccountBalance ATA erro: {data['error']}")
-        else:
+        if "error" not in data:
             value = data.get("result", {}).get("value")
             if value:
                 amount_str = value.get("amount", "0")
@@ -112,26 +99,23 @@ async def get_token_balance_raw(
                 if amount_raw > 0:
                     return amount_raw, decimals
     except Exception as e:
-        logger.debug(f"getTokenAccountBalance erro: {e}")
+        logger.debug(f"getTokenAccountBalance: {e}")
 
     # 3) getAccountInfo na ATA (parse manual se necessário)
     try:
         owner = Pubkey.from_string(wallet_pubkey)
         mint_pk = Pubkey.from_string(mint)
         ata = get_associated_token_address(owner, mint_pk)
-        ata_str = str(ata)
-
         body = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getAccountInfo",
-            "params": [ata_str, {"encoding": "jsonParsed"}],
+            "params": [str(ata), {"encoding": "jsonParsed"}],
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(rpc_url, json=body)
             r.raise_for_status()
             data = r.json()
-
         if "error" not in data:
             parsed = data.get("result", {}).get("value", {}).get("data", {}).get("parsed", {}).get("info", {})
             token_amount = parsed.get("tokenAmount", {})
@@ -141,12 +125,12 @@ async def get_token_balance_raw(
             if amount_raw > 0:
                 return amount_raw, decimals
     except Exception as e:
-        logger.debug(f"getAccountInfo ATA erro: {e}")
+        logger.debug(f"getAccountInfo ATA: {e}")
 
     # 4) Último recurso: saldo do positions.json
     if fallback_amount_raw and fallback_amount_raw > 0:
         logger.info(f"Usando amount_raw do positions.json para {mint[:12]}... (chain indisponível)")
-        return fallback_amount_raw, 6  # decimals default
+        return fallback_amount_raw, 6
 
     return None
 
@@ -233,8 +217,7 @@ async def sell_via_jupiter(
 
         raw_tx = VersionedTransaction.from_bytes(tx_bytes)
         signed_tx = VersionedTransaction(raw_tx.message, [wallet_keypair])
-        serialized = bytes(signed_tx)
-        b64 = base64.b64encode(serialized).decode("ascii")
+        b64 = base64.b64encode(bytes(signed_tx)).decode("ascii")
 
         rpc_url = settings.get_rpc_url()
         body = {
@@ -243,24 +226,18 @@ async def sell_via_jupiter(
             "method": "sendTransaction",
             "params": [
                 b64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "preflightCommitment": "confirmed",
-                },
+                {"encoding": "base64", "skipPreflight": True, "preflightCommitment": "confirmed"},
             ],
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(rpc_url, json=body)
             r.raise_for_status()
             data = r.json()
-
         if "error" in data:
             err = data["error"]
             err_msg = err.get("message", str(err))[:200]
             logger.error(f"Jupiter sell RPC erro: {err_msg}")
             return False, err_msg
-
         txid = data.get("result")
         if txid:
             logger.info(f"✅ Jupiter SELL executada: {mint[:12]}... tx={txid}")

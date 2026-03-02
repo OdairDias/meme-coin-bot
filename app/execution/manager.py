@@ -121,29 +121,29 @@ class PositionManager:
         symbol = pos.get("symbol") or token[:8]
         symbol = symbol.decode() if isinstance(symbol, bytes) else str(symbol)
 
-        # Executar venda
+        # Sempre vender 100% — vendas parciais (50%) falham com tokens graduados (PumpPortal 400)
+        amount_to_sell = "100%"
+
+        # Executar venda (sempre 100% — parciais falham com tokens graduados)
         try:
             try:
                 success = await self.executor.sell(
                     token_address=token,
-                    amount=pos["quantity"],
+                    amount=amount_to_sell,
                     denominated_in_sol=False,
-                    slippage=0,
+                    slippage=10.0,
                 )
             except ValueError as e:
                 if str(e) == "ZERO_BALANCE":
                     logger.error(f"ERRO CRÍTICO: Saldo zero para {token}, tokens NÃO foram vendidos! Posição mantida.")
-                    # NÃO marcar como success, manter posição aberta para retry manual
-                    # Alertar urgentemente
                     if self.alerter:
                         try:
                             await self.alerter.send_alert("critical", f"FALHA AO VENDER {symbol}: saldo zero. Posição mantida!")
                         except Exception:
                             pass
-                    return False  # Não remove a posição!
+                    return False
                 else:
                     raise
-
             if not success:
                 logger.error(f"Falha ao vender {token}")
                 return False
@@ -310,10 +310,8 @@ class PositionManager:
                     exit_reason = self.risk_manager.check_exit_conditions(token, current_price)
                     if exit_reason:
                         logger.info(f"🔍 Condição de saída para {token}: {exit_reason}")
-                        if exit_reason == "TAKE_PROFIT_PARTIAL":
-                            await self._partial_close_position(token)
-                        else:
-                            await self.close_position(token, reason=exit_reason)
+                        # Sempre vender 100% (TP parcial também) — vendas parciais falham com tokens graduados
+                        await self.close_position(token, reason=exit_reason)
 
             except asyncio.CancelledError:
                 break

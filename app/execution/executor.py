@@ -134,7 +134,6 @@ class Executor:
                     b64,
                     {
                         "encoding": "base64",
-                        # Helius e outros RPCs privados não suportam preflight; enviamos direto
                         "skipPreflight": True,
                         "preflightCommitment": "confirmed",
                     },
@@ -413,13 +412,7 @@ class Executor:
         """Detecta erro 6022 (Sell zero amount). Não reenviar tx — fechar posição e evitar mais gas."""
         if not err:
             return False
-        return "6022" in err or "sell zero" in err.lower()
-
-    def _is_400_or_graduation_error(self, err: Optional[str], status_code: int) -> bool:
-        """Qualquer 400 ou erro de graduação → Jupiter fallback."""
-        if status_code == 400:
-            return True
-        return self._is_bonding_curve_error(err)
+        return "6022" in str(err) or "sell zero" in (str(err) or "").lower()
 
     async def _get_real_token_balance_raw(self, token_address: str, use_fallback: bool = True) -> Optional[int]:
         """
@@ -437,7 +430,7 @@ class Executor:
         if result:
             amount_raw, _ = result
             if use_fallback:
-                update_amount_raw(token_address, amount_raw)  # cache para próximo fallback
+                update_amount_raw(token_address, amount_raw)
             return amount_raw
         return None
 
@@ -451,38 +444,27 @@ class Executor:
         pool: str = "auto",
     ) -> bool:
         """
-        Vende tokens via PumpPortal; se 400 (token graduado) → Jupiter V6.
-        Saldo real consultado antes de vender (getTokenAccountBalance).
-        Slippage: 10% primeira tentativa, 20% retry/Jupiter.
+        Vende tokens: PumpPortal → Raydium → Jupiter V6 (fallback para 400/graduados).
+        amount: "100%" (recomendado) ou quantidade em tokens.
+        Saldo real consultado antes de vender.
         """
         if settings.DRY_RUN:
             logger.info(f"[DRY_RUN] SELL {token_address} amount={amount} slippage={slippage}%")
             return True
 
-        # 1) Resolver amount: 100% = saldo total; 50% = metade do saldo (parcial)
-        amount_to_use = amount
-        amount_raw_to_sell: Optional[int] = None  # para Jupiter fallback quando vendemos % do saldo
-        if amount == "100%" or (isinstance(amount, str) and "100" in str(amount)):
+        # 1) Resolver amount: 100% = saldo total
+        amount_to_use = "100%" if (amount in ("100%", "100") or (isinstance(amount, str) and "100" in str(amount))) else amount
+        amount_raw_to_sell: Optional[int] = None
+        if amount_to_use == "100%":
             balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
             if not balance_raw or balance_raw <= 0:
                 logger.warning(f"Saldo zero ou conta inexistente para {token_address[:12]}... (não enviando tx de venda)")
                 raise ValueError("ZERO_BALANCE")
-            amount_to_use = "100%"
             amount_raw_to_sell = balance_raw
-        elif amount == "50%" or (isinstance(amount, str) and "50" in str(amount)):
-            balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
-            if not balance_raw or balance_raw <= 0:
-                logger.warning(f"Saldo zero para venda parcial {token_address[:12]}...")
-                raise ValueError("ZERO_BALANCE")
-            amount_raw_to_sell = balance_raw // 2
-            if amount_raw_to_sell <= 0:
-                logger.warning(f"Saldo insuficiente para venda 50%: {token_address[:12]}...")
-                raise ValueError("ZERO_BALANCE")
-            amount_to_use = "50%"  # PumpPortal aceita "50%"; Jupiter usa amount_raw_to_sell
 
-        slippage_first = 10.0  # 10% primeira tentativa
+        slippage_first = 10.0
         slippage = slippage if slippage > 0 else slippage_first
-        slippage_retry = 20.0  # 20% para retry/Jupiter (Raydium)
+        slippage_retry = 20.0
         priority_fee = priority_fee if priority_fee > 0 else (
             await self._get_helius_priority_fee_sol() if self._helius_rpc else 0.00005
         )
@@ -501,7 +483,7 @@ class Executor:
             if success:
                 return True
 
-            # 6022 = Sell zero amount: saldo já é 0 na chain — fechar posição sem retentar (evita gas)
+            # 6022 = Sell zero amount: saldo já é 0 na chain
             if self._is_sell_zero_error(error):
                 logger.warning("6022 detectado: saldo zero na chain, fechando posição sem reenviar tx")
                 return True
@@ -509,9 +491,9 @@ class Executor:
             # 3) Retry PumpPortal com pool=raydium (slippage 20%)
             if pool != "raydium":
                 if self._is_bonding_curve_error(error):
-                    logger.info(f"🔄 Token migrou para Raydium, tentando pool=raydium (slippage 20%)")
+                    logger.info("🔄 Token migrou para Raydium, tentando pool=raydium (slippage 20%)")
                 else:
-                    logger.info(f"🔄 Venda falhou, tentando pool=raydium (fallback)")
+                    logger.info("🔄 Venda falhou, tentando pool=raydium")
                 success2, error2 = await self._execute(
                     action="sell",
                     token_address=token_address,
@@ -525,28 +507,26 @@ class Executor:
                     return True
                 error = error2
 
-            # 6022 após retry raydium: não tentar Jupiter (saldo zero)
+            # 6022 após retry raydium: não tentar Jupiter
             if self._is_sell_zero_error(error):
                 logger.warning("6022 detectado (após raydium): fechando posição sem Jupiter")
                 return True
 
-            # 4) Jupiter V6 obrigatório quando PumpPortal falha (400, graduação, etc.)
-            # Usar amount_raw_to_sell (já definido para 100% ou 50%) ou buscar saldo de novo
+            # 4) Jupiter V6 quando PumpPortal falha (400, graduação)
             if amount_raw_to_sell is None:
-                amount_raw_to_sell = await self._get_real_token_balance_raw(token_address, use_fallback=False)
+                amount_raw_to_sell = await self._get_real_token_balance_raw(token_address, use_fallback=True)
             if amount_raw_to_sell and amount_raw_to_sell > 0:
-                logger.info(f"🔄 Jupiter V6: vendendo {token_address[:12]}... (amount_raw, slippage 20%)")
+                logger.info(f"🔄 Jupiter V6: vendendo {token_address[:12]}... (slippage 20%)")
                 from app.execution.jupiter_swap import sell_via_jupiter
-
                 ok, _ = await sell_via_jupiter(
                     self.wallet_address,
                     self.wallet_kp,
                     token_address,
                     amount_raw_to_sell,
-                    slippage_bps=2000,  # 20%
+                    slippage_bps=2000,
                 )
                 return ok
-            logger.warning("Jupiter: saldo zero, não há o que vender")
+            logger.warning("Jupiter: saldo zero ou indisponível")
 
             return False
         except Exception as e:
