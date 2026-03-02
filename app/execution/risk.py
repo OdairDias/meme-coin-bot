@@ -250,6 +250,7 @@ class MemeRiskManager:
 
         # Stop loss
         if pnl_percent <= -settings.STOP_LOSS_PERCENT:
+            logger.info(f"🔴 SL: {token[:8]} entry={entry:.8f} current={current_price:.8f} pnl={pnl_percent:.1f}%")
             return "STOP_LOSS"
 
         # Take profit 1 (parcial): só dispara se ainda temos 100% (não fechamos parcial antes)
@@ -259,10 +260,12 @@ class MemeRiskManager:
         qty = pos.get("quantity", "100%")
         is_full_position = qty == "100%" or (isinstance(qty, str) and "100" in qty)
         if is_full_position and pnl_percent >= tp1_threshold:
+            logger.info(f"🟢 TP1: {token[:8]} entry={entry:.8f} current={current_price:.8f} pnl={pnl_percent:.1f}% (target={tp1_threshold:.1f}%)")
             return "TAKE_PROFIT_PARTIAL"
 
         # Take profit 2 (full): só após TP1 ter fechado 50%
         if pnl_percent >= settings.TAKE_PROFIT_PERCENT2:
+            logger.info(f"🟢 TP2: {token[:8]} entry={entry:.8f} current={current_price:.8f} pnl={pnl_percent:.1f}%")
             return "TAKE_PROFIT_FULL"
 
         # Timeout

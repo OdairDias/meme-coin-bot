@@ -132,9 +132,15 @@ class PositionManager:
                 )
             except ValueError as e:
                 if str(e) == "ZERO_BALANCE":
-                    logger.warning(f"Saldo zero para {token}, fechando localmente.")
-                    success = True
-                    reason = f"{reason}_ZERO_BALANCE"
+                    logger.error(f"ERRO CRÍTICO: Saldo zero para {token}, tokens NÃO foram vendidos! Posição mantida.")
+                    # NÃO marcar como success, manter posição aberta para retry manual
+                    # Alertar urgentemente
+                    if self.alerter:
+                        try:
+                            await self.alerter.send_alert("critical", f"FALHA AO VENDER {symbol}: saldo zero. Posição mantida!")
+                        except Exception:
+                            pass
+                    return False  # Não remove a posição!
                 else:
                     raise
 
