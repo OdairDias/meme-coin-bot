@@ -56,7 +56,7 @@ class Executor:
         pool: str = "auto",
     ) -> dict:
         """Monta body conforme documentação PumpPortal."""
-        return {
+        payload = {
             "publicKey": self.wallet_address,
             "action": action,
             "mint": mint,
@@ -66,6 +66,9 @@ class Executor:
             "priorityFee": priority_fee,
             "pool": pool,
         }
+        # Log do payload para debug
+        logger.debug(f"📤 PumpPortal payload: action={action} amount={amount} slippage={slippage}% pool={pool}")
+        return payload
 
     async def _get_helius_priority_fee_sol(self) -> float:
         """
