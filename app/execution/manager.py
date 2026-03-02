@@ -74,14 +74,21 @@ class PositionManager:
                 logger.error(f"Falha ao comprar {signal['symbol']}")
                 return False
 
-            # Entry price: usar preço do sinal (SL/TP calculados sobre este preço)
             signal_entry = signal["entry_price"]
 
-            # Registrar posição (quantity="100%" quando buy_in_sol para vender tudo)
+            if settings.USE_CONSERVATIVE_ENTRY:
+                entry_for_sl_tp = signal_entry * (1.0 + settings.DEFAULT_SLIPPAGE / 100.0)
+                logger.info(
+                    f"Entry conservador: sinal=${signal_entry:.8f} → entry_sl_tp=${entry_for_sl_tp:.8f} "
+                    f"(+{settings.DEFAULT_SLIPPAGE:.0f}% slippage)"
+                )
+            else:
+                entry_for_sl_tp = signal_entry
+
             qty_for_record = "100%" if buy_in_sol else signal["quantity"]
             await self.risk_manager.record_position_open(
                 token=signal["address"],
-                entry_price=signal_entry,
+                entry_price=entry_for_sl_tp,
                 quantity=qty_for_record,
                 side="BUY",
                 symbol=signal.get("symbol", ""),
@@ -89,14 +96,14 @@ class PositionManager:
             )
 
             log_qty = f"{buy_amount} SOL" if buy_in_sol else f"qty={signal['quantity']:.6f}"
-            logger.info(f"✅ Posição aberta: {signal['symbol']} {log_qty} @ ${signal_entry:.6f}")
+            logger.info(f"✅ Posição aberta: {signal['symbol']} {log_qty} @ ${entry_for_sl_tp:.6f} (sinal=${signal_entry:.6f})")
             if self.alerter:
                 try:
                     qty_alert = buy_amount if buy_in_sol else signal["quantity"]
                     await self.alerter.send_trade(
                         symbol=signal["symbol"],
                         side="BUY",
-                        price=signal_entry,
+                        price=entry_for_sl_tp,
                         quantity=qty_alert,
                     )
                 except Exception as e:
@@ -148,9 +155,6 @@ class PositionManager:
                 logger.error(f"Falha ao vender {token}")
                 return False
 
-            # PnL para notificação - calcular baseado na quantidade real ou_estimada
-            # Se quantity é string (100% ou 50%), estimar baseado no buy_amount_sol
-            actual_quantity = quantity
             if isinstance(quantity, str):
                 # Calcular PnL percent primeiro
                 if side == "BUY":
@@ -160,21 +164,17 @@ class PositionManager:
                 
                 # Converter buy_amount_sol de SOL para USD
                 buy_amount_sol = pos.get("buy_amount_sol", 0)
-                sol_price_usd = 40.0  # Fallback
+                sol_price_usd = 40.0
                 try:
                     from app.scanners.jupiter import get_sol_price_usd
-                    import asyncio
-                    sol_price_usd = asyncio.get_event_loop().run_until_complete(get_sol_price_usd())
+                    sol_price_usd = await get_sol_price_usd() or 40.0
                 except Exception:
                     pass
                 
                 buy_amount_usd = buy_amount_sol * sol_price_usd
-                
-                # Se é 50%, usar metade
                 if "50" in quantity:
                     buy_amount_usd = buy_amount_usd * 0.5
                 
-                # PnL em USD: % do valor que gastamos em USD
                 if buy_amount_usd > 0:
                     pnl = (pnl_percent / 100) * buy_amount_usd
                 else:
@@ -206,12 +206,22 @@ class PositionManager:
             return False
 
     async def _partial_close_position(self, token: str) -> bool:
-        """Fecha 50% da posição (take profit parcial). Mantém a posição com quantity=50%."""
+        """Fecha 50% da posição (take profit parcial). Mantém a posição com quantity=50%.
+        Limite de 3 tentativas; após isso, faz close total."""
+        _MAX_PARTIAL_ATTEMPTS = 3
+
         if token not in self.risk_manager.open_positions:
             logger.warning(f"Posição não encontrada para parcial: {token}")
             return False
 
         pos = self.risk_manager.open_positions[token]
+        attempts = pos.get("_partial_attempts", 0) + 1
+        pos["_partial_attempts"] = attempts
+
+        if attempts > _MAX_PARTIAL_ATTEMPTS:
+            logger.warning(f"Parcial falhou {_MAX_PARTIAL_ATTEMPTS}x para {token[:12]}. Vendendo 100%.")
+            return await self.close_position(token, reason="TAKE_PROFIT_PARTIAL_FALLBACK")
+
         current_price = pos.get("current_price", pos["entry_price"])
         entry = pos["entry_price"]
         side = pos.get("side", "BUY")
@@ -226,17 +236,16 @@ class PositionManager:
                 slippage=0,
             )
             if not success:
-                logger.error(f"Falha ao vender 50% de {token}")
+                logger.error(f"Falha ao vender 50% de {token} (tentativa {attempts}/{_MAX_PARTIAL_ATTEMPTS})")
                 return False
 
             pnl_percent = ((current_price - entry) / entry * 100) if (side == "BUY" and entry > 0) else 0
             # Calcular PnL USD baseado no buy_amount_sol (converter SOL -> USD)
             buy_amount_sol = pos.get("buy_amount_sol", 0)
-            sol_price_usd = 40.0  # Fallback
+            sol_price_usd = 40.0
             try:
                 from app.scanners.jupiter import get_sol_price_usd
-                import asyncio
-                sol_price_usd = asyncio.get_event_loop().run_until_complete(get_sol_price_usd())
+                sol_price_usd = await get_sol_price_usd() or 40.0
             except Exception:
                 pass
             
@@ -310,8 +319,10 @@ class PositionManager:
                     exit_reason = self.risk_manager.check_exit_conditions(token, current_price)
                     if exit_reason:
                         logger.info(f"🔍 Condição de saída para {token}: {exit_reason}")
-                        # Sempre vender 100% (TP parcial também) — vendas parciais falham com tokens graduados
-                        await self.close_position(token, reason=exit_reason)
+                        if exit_reason == "TAKE_PROFIT_PARTIAL":
+                            await self._partial_close_position(token)
+                        else:
+                            await self.close_position(token, reason=exit_reason)
 
             except asyncio.CancelledError:
                 break

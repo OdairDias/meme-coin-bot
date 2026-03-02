@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # Fallback de Priority Fee em SOL caso não use RPC Helius (0.001 SOL = ~$0.15, super competitivo)
     PRIORITY_FEE_FALLBACK_SOL: float = Field(default=0.001, env="PRIORITY_FEE_FALLBACK_SOL")
     # Intervalo (s) entre checagens de preço no monitoramento (Jupiter); 15s economiza créditos e é suficiente para SL/TP
-    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=2, env="MONITOR_PRICE_INTERVAL_SECONDS")
+    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=15, env="MONITOR_PRICE_INTERVAL_SECONDS")
     # Ao iniciar: vender tokens na carteira que não estão em positions.json (resíduos)
     AUTO_CLEANUP_ON_STARTUP: bool = Field(default=False, env="AUTO_CLEANUP_ON_STARTUP")
 

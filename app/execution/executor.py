@@ -452,14 +452,20 @@ class Executor:
             logger.info(f"[DRY_RUN] SELL {token_address} amount={amount} slippage={slippage}%")
             return True
 
-        # 1) Resolver amount: 100% = saldo total
-        amount_to_use = "100%" if (amount in ("100%", "100") or (isinstance(amount, str) and "100" in str(amount))) else amount
+        # 1) Resolver amount: "100%" = saldo total, "50%" = metade
+        is_partial = isinstance(amount, str) and "50" in str(amount)
+        is_full = not is_partial and (amount in ("100%", "100") or (isinstance(amount, str) and "100" in str(amount)))
         amount_raw_to_sell: Optional[int] = None
-        if amount_to_use == "100%":
-            balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
-            if not balance_raw or balance_raw <= 0:
-                logger.warning(f"Saldo zero ou conta inexistente para {token_address[:12]}... (não enviando tx de venda)")
-                raise ValueError("ZERO_BALANCE")
+
+        balance_raw = await self._get_real_token_balance_raw(token_address, use_fallback=False)
+        if not balance_raw or balance_raw <= 0:
+            logger.warning(f"Saldo zero ou conta inexistente para {token_address[:12]}... (não enviando tx de venda)")
+            raise ValueError("ZERO_BALANCE")
+
+        if is_partial:
+            amount_raw_to_sell = balance_raw // 2
+            logger.info(f"Venda parcial 50%: balance_raw={balance_raw} → vendendo {amount_raw_to_sell}")
+        else:
             amount_raw_to_sell = balance_raw
 
         slippage_first = 10.0
@@ -470,11 +476,28 @@ class Executor:
         )
 
         try:
+            # VENDAS PARCIAIS: direto ao Jupiter (PumpPortal não aceita quantidades parciais de forma confiável)
+            if is_partial:
+                logger.info(f"🔄 Venda parcial via Jupiter V6: {token_address[:12]}... amount_raw={amount_raw_to_sell}")
+                from app.execution.jupiter_swap import sell_via_jupiter
+                ok, err = await sell_via_jupiter(
+                    self.wallet_address,
+                    self.wallet_kp,
+                    token_address,
+                    amount_raw_to_sell,
+                    slippage_bps=2000,
+                )
+                if ok:
+                    return True
+                logger.warning(f"Jupiter parcial falhou: {err}")
+                return False
+
+            # VENDAS TOTAIS (100%): PumpPortal → Raydium → Jupiter
             # 2) Tentar PumpPortal (slippage 10%)
             success, error = await self._execute(
                 action="sell",
                 token_address=token_address,
-                amount=amount_to_use,
+                amount="100%",
                 denominated_in_sol=denominated_in_sol,
                 slippage=slippage,
                 priority_fee=priority_fee,
@@ -483,7 +506,6 @@ class Executor:
             if success:
                 return True
 
-            # 6022 = Sell zero amount: saldo já é 0 na chain
             if self._is_sell_zero_error(error):
                 logger.warning("6022 detectado: saldo zero na chain, fechando posição sem reenviar tx")
                 return True
@@ -497,7 +519,7 @@ class Executor:
                 success2, error2 = await self._execute(
                     action="sell",
                     token_address=token_address,
-                    amount=amount_to_use,
+                    amount="100%",
                     denominated_in_sol=denominated_in_sol,
                     slippage=slippage_retry,
                     priority_fee=priority_fee,
@@ -507,14 +529,11 @@ class Executor:
                     return True
                 error = error2
 
-            # 6022 após retry raydium: não tentar Jupiter
             if self._is_sell_zero_error(error):
                 logger.warning("6022 detectado (após raydium): fechando posição sem Jupiter")
                 return True
 
             # 4) Jupiter V6 quando PumpPortal falha (400, graduação)
-            if amount_raw_to_sell is None:
-                amount_raw_to_sell = await self._get_real_token_balance_raw(token_address, use_fallback=True)
             if amount_raw_to_sell and amount_raw_to_sell > 0:
                 logger.info(f"🔄 Jupiter V6: vendendo {token_address[:12]}... (slippage 20%)")
                 from app.execution.jupiter_swap import sell_via_jupiter

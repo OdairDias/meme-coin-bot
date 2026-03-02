@@ -169,15 +169,17 @@ class MemeRiskManager:
                 pnl_percent = ((exit_price - entry) / entry) * 100 if entry > 0 else 0
             else:
                 pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
-            # Converter buy_amount_sol de SOL para USD
-            sol_price_usd = 0.0
+            sol_price_usd = 40.0
             try:
                 from app.scanners.jupiter import get_sol_price_usd
                 import asyncio
-                sol_price_usd = asyncio.get_event_loop().run_until_complete(get_sol_price_usd())
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    sol_price_usd = 40.0
+                else:
+                    sol_price_usd = loop.run_until_complete(get_sol_price_usd()) or 40.0
             except Exception as e:
-                logger.warning(f"Erro ao buscar preço SOL, usando fallback: {e}")
-                sol_price_usd = 40.0  # Fallback ~$40/SOL
+                logger.debug(f"Preço SOL fallback: {e}")
             
             buy_amount_usd = buy_amount_sol * sol_price_usd
             pnl = (pnl_percent / 100) * buy_amount_usd
