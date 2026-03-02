@@ -476,10 +476,11 @@ class Executor:
         )
 
         try:
-            # VENDAS PARCIAIS: direto ao Jupiter (PumpPortal não aceita quantidades parciais de forma confiável)
+            # VENDAS PARCIAIS: Jupiter quote (grátis) → PumpPortal fallback (bonding curve)
             if is_partial:
-                logger.info(f"🔄 Venda parcial via Jupiter V6: {token_address[:12]}... amount_raw={amount_raw_to_sell}")
                 from app.execution.jupiter_swap import sell_via_jupiter
+
+                logger.info(f"🔄 Venda parcial: Jupiter V6 primeiro ({token_address[:12]}... amount_raw={amount_raw_to_sell})")
                 ok, err = await sell_via_jupiter(
                     self.wallet_address,
                     self.wallet_kp,
@@ -489,7 +490,22 @@ class Executor:
                 )
                 if ok:
                     return True
-                logger.warning(f"Jupiter parcial falhou: {err}")
+
+                # Jupiter falhou (bonding curve?) → PumpPortal com quantidade numérica
+                human_amount = amount_raw_to_sell / 1_000_000  # pump.fun tokens = 6 decimals
+                logger.info(f"🔄 Jupiter falhou ({err}), PumpPortal parcial: {human_amount:.6f} tokens")
+                pp_ok, pp_err = await self._execute(
+                    action="sell",
+                    token_address=token_address,
+                    amount=human_amount,
+                    denominated_in_sol=False,
+                    slippage=20.0,
+                    priority_fee=priority_fee,
+                    pool=pool,
+                )
+                if pp_ok:
+                    return True
+                logger.warning(f"Venda parcial falhou em ambos (Jupiter: {err}, PumpPortal: {pp_err})")
                 return False
 
             # VENDAS TOTAIS (100%): PumpPortal → Raydium → Jupiter

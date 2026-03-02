@@ -162,12 +162,13 @@ class PositionManager:
                 else:
                     pnl_percent = ((entry - current_price) / entry * 100) if entry > 0 else 0
                 
-                # Converter buy_amount_sol de SOL para USD
                 buy_amount_sol = pos.get("buy_amount_sol", 0)
-                sol_price_usd = 40.0
+                sol_price_usd = 150.0
                 try:
                     from app.scanners.jupiter import get_sol_price_usd
-                    sol_price_usd = await get_sol_price_usd() or 40.0
+                    fetched = await get_sol_price_usd()
+                    if fetched and fetched > 0:
+                        sol_price_usd = fetched
                 except Exception:
                     pass
                 
@@ -240,12 +241,13 @@ class PositionManager:
                 return False
 
             pnl_percent = ((current_price - entry) / entry * 100) if (side == "BUY" and entry > 0) else 0
-            # Calcular PnL USD baseado no buy_amount_sol (converter SOL -> USD)
             buy_amount_sol = pos.get("buy_amount_sol", 0)
-            sol_price_usd = 40.0
+            sol_price_usd = 150.0
             try:
                 from app.scanners.jupiter import get_sol_price_usd
-                sol_price_usd = await get_sol_price_usd() or 40.0
+                fetched = await get_sol_price_usd()
+                if fetched and fetched > 0:
+                    sol_price_usd = fetched
             except Exception:
                 pass
             

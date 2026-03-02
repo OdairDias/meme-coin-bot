@@ -65,15 +65,17 @@ class Settings(BaseSettings):
     HELIUS_API_KEY: str | None = Field(default=None, env="HELIUS_API_KEY")
     HELIUS_RPC: str | None = Field(default=None, env="HELIUS_RPC")  # URL completa, ex: https://mainnet.helius-rpc.com/?api-key=XXX
     # Slippage padrão para compra (%). Ver docs/SLIPPAGE_E_TAXAS.md
-    DEFAULT_SLIPPAGE: float = Field(default=30.0, env="DEFAULT_SLIPPAGE")
-    # Se True, usa entry_price conservador (preço_sinal × (1 + DEFAULT_SLIPPAGE/100)) para SL/TP refletirem custo real
-    USE_CONSERVATIVE_ENTRY: bool = Field(default=True, env="USE_CONSERVATIVE_ENTRY")
+    DEFAULT_SLIPPAGE: float = Field(default=15.0, env="DEFAULT_SLIPPAGE")
+    # Se True, usa entry_price conservador (preço_sinal × (1 + DEFAULT_SLIPPAGE/100)) para SL/TP
+    # DESLIGADO por padrão: inflava entry em 30%, atrasando SL e causando perdas maiores (-30% a -53% vs -20% target)
+    USE_CONSERVATIVE_ENTRY: bool = Field(default=False, env="USE_CONSERVATIVE_ENTRY")
     # Nível de priority fee para Helius (Min, Low, Medium, High, VeryHigh, UnsafeMax)
     PRIORITY_FEE_LEVEL: str = Field(default="veryHigh", env="PRIORITY_FEE_LEVEL")
     # Fallback de Priority Fee em SOL caso não use RPC Helius (0.001 SOL = ~$0.15, super competitivo)
     PRIORITY_FEE_FALLBACK_SOL: float = Field(default=0.001, env="PRIORITY_FEE_FALLBACK_SOL")
-    # Intervalo (s) entre checagens de preço no monitoramento (Jupiter); 15s economiza créditos e é suficiente para SL/TP
-    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=15, env="MONITOR_PRICE_INTERVAL_SECONDS")
+    # Intervalo (s) entre checagens de preço no monitoramento (DexScreener + Jupiter fallback)
+    # 5s = rápido para SL em memecoins voláteis (15s era lento demais, SL disparava a -30%/-53% vs -20% target)
+    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=5, env="MONITOR_PRICE_INTERVAL_SECONDS")
     # Ao iniciar: vender tokens na carteira que não estão em positions.json (resíduos)
     AUTO_CLEANUP_ON_STARTUP: bool = Field(default=False, env="AUTO_CLEANUP_ON_STARTUP")
 

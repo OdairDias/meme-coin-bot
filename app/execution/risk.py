@@ -164,23 +164,19 @@ class MemeRiskManager:
                 pnl = (entry - exit_price) * quantity
                 pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
         elif isinstance(quantity, str) and buy_amount_sol > 0:
-            # Calcular PnL baseado no valor gasto e % de ganho
             if side == "BUY":
                 pnl_percent = ((exit_price - entry) / entry) * 100 if entry > 0 else 0
             else:
                 pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
-            sol_price_usd = 40.0
+            sol_price_usd = 150.0
             try:
                 from app.scanners.jupiter import get_sol_price_usd
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    sol_price_usd = 40.0
-                else:
-                    sol_price_usd = loop.run_until_complete(get_sol_price_usd()) or 40.0
+                fetched = await get_sol_price_usd()
+                if fetched and fetched > 0:
+                    sol_price_usd = fetched
             except Exception as e:
                 logger.debug(f"Preço SOL fallback: {e}")
-            
+
             buy_amount_usd = buy_amount_sol * sol_price_usd
             pnl = (pnl_percent / 100) * buy_amount_usd
         else:

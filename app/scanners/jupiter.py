@@ -48,6 +48,7 @@ async def get_price_usd(mint_address: str) -> Optional[float]:
 async def get_sol_price_usd() -> Optional[float]:
     """
     Obtém preço do SOL em USD. Cache de 5 min para economizar chamadas.
+    Se API falhar, retorna cache expirado (melhor que fallback fixo).
     """
     global _sol_price_cache
     now = time.monotonic()
@@ -57,7 +58,11 @@ async def get_sol_price_usd() -> Optional[float]:
     price = await get_price_usd(SOL_MINT)
     if price and price > 0:
         _sol_price_cache = (price, now)
-    return price
+        return price
+    if cached_price > 0:
+        logger.debug(f"Jupiter SOL price API falhou, usando cache expirado: ${cached_price:.2f}")
+        return cached_price
+    return None
 
 
 class JupiterPriceFetcher:
