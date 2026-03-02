@@ -116,11 +116,14 @@ class PositionManager:
         symbol = pos.get("symbol") or token[:8]
         symbol = symbol.decode() if isinstance(symbol, bytes) else str(symbol)
 
+        # Sempre vender 100% — vendas parciais (50%) falham com tokens graduados (PumpPortal 400)
+        amount_to_sell = "100%"
+
         # Executar venda
         try:
             success = await self.executor.sell(
                 token_address=token,
-                amount=pos["quantity"],
+                amount=amount_to_sell,
                 denominated_in_sol=False,
                 slippage=10.0,
             )

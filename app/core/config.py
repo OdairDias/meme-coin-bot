@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     PUMP_PORTAL_API: str = Field(default="https://pumpportal.fun/api/trade-local", env="PUMP_PORTAL_API")
     # RPC Solana (obrigatório para trade-local: assinar e enviar tx)
     SOLANA_RPC_URL: str = Field(default="https://api.mainnet-beta.solana.com", env="SOLANA_RPC_URL")
+    HELIUS_RPC: str | None = Field(default=None, env="HELIUS_RPC")  # Preferir quando definido
+    HELIUS_API_KEY: str | None = Field(default=None, env="HELIUS_API_KEY")
 
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")
@@ -68,6 +70,14 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+
+    def get_rpc_url(self) -> str:
+        """HELIUS_RPC > URL com HELIUS_API_KEY > SOLANA_RPC_URL."""
+        if self.HELIUS_RPC and self.HELIUS_RPC.strip():
+            return self.HELIUS_RPC.strip()
+        if self.HELIUS_API_KEY and self.HELIUS_API_KEY.strip():
+            return f"https://mainnet.helius-rpc.com/?api-key={self.HELIUS_API_KEY.strip()}"
+        return self.SOLANA_RPC_URL
 
 
 settings = Settings()

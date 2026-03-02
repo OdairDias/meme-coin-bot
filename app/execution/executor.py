@@ -63,14 +63,14 @@ class Executor:
             serialized = bytes(signed_tx)
             b64 = base64.b64encode(serialized).decode("ascii")
 
-            rpc_url = settings.SOLANA_RPC_URL
+            rpc_url = settings.get_rpc_url()
             body = {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "sendTransaction",
                 "params": [
                     b64,
-                    {"encoding": "base64", "skipPreflight": False, "preflightCommitment": "confirmed"},
+                    {"encoding": "base64", "skipPreflight": True, "preflightCommitment": "confirmed"},
                 ],
             }
             async with httpx.AsyncClient(timeout=30.0) as rpc_client:
@@ -212,6 +212,13 @@ class Executor:
             or "raydium" in err_lower
         )
 
+    async def _get_balance_raw(self, token_address: str) -> Optional[int]:
+        """Saldo real via getTokenAccountsByOwner (evita -32602)."""
+        from app.execution.jupiter_swap import get_token_balance_raw
+        rpc_url = settings.get_rpc_url()
+        result = await get_token_balance_raw(rpc_url, self.wallet_address, token_address)
+        return result[0] if result else None
+
     async def sell(
         self,
         token_address: str,
@@ -222,19 +229,22 @@ class Executor:
         pool: str = "auto",
     ) -> bool:
         """
-        Vende tokens via PumpPortal.
-        Se falhar com BondingCurveComplete (token migrou para Raydium), retenta com pool=raydium.
-        amount: quantidade em tokens ou "100%" para vender tudo.
+        Vende tokens: PumpPortal → Raydium → Jupiter V6 (fallback para 400/graduados).
+        amount: "100%" (recomendado) ou quantidade em tokens.
         """
         if settings.DRY_RUN:
             logger.info(f"[DRY_RUN] SELL {token_address} amount={amount} slippage={slippage}%")
             return True
 
+        amount_use = amount
+        if amount in ("100%", "100") or (isinstance(amount, str) and "100" in str(amount)):
+            amount_use = "100%"
+
         try:
             success, error = await self._execute(
                 action="sell",
                 token_address=token_address,
-                amount=amount,
+                amount=amount_use,
                 denominated_in_sol=denominated_in_sol,
                 slippage=slippage,
                 priority_fee=priority_fee,
@@ -242,22 +252,43 @@ class Executor:
             )
             if success:
                 return True
-            # Retry na Raydium se token migrou (bonding curve completa) ou erro sugere migração
+
+            # Retry pool=raydium
             if pool != "raydium":
                 if self._is_bonding_curve_error(error):
-                    logger.info(f"🔄 Token migrou para Raydium (detectado), tentando pool=raydium")
+                    logger.info("🔄 Token migrou para Raydium, tentando pool=raydium")
                 else:
-                    logger.info(f"🔄 Venda falhou, tentando pool=raydium (fallback)")
-                success2, _ = await self._execute(
+                    logger.info("🔄 Venda falhou, tentando pool=raydium")
+                success2, error2 = await self._execute(
                     action="sell",
                     token_address=token_address,
-                    amount=amount,
+                    amount=amount_use,
                     denominated_in_sol=denominated_in_sol,
-                    slippage=slippage,
+                    slippage=20.0,
                     priority_fee=priority_fee,
                     pool="raydium",
                 )
-                return success2
+                if success2:
+                    return True
+                error = error2
+
+            # Jupiter V6 obrigatório (400 ou qualquer falha PumpPortal)
+            is_400 = "400" in str(error) or "bad request" in (str(error) or "").lower()
+            if is_400 or self._is_bonding_curve_error(error):
+                balance_raw = await self._get_balance_raw(token_address)
+                if balance_raw and balance_raw > 0:
+                    logger.info(f"🔄 Jupiter V6: vendendo {token_address[:12]}... (slippage 20%)")
+                    from app.execution.jupiter_swap import sell_via_jupiter
+                    ok, _ = await sell_via_jupiter(
+                        self.wallet_address,
+                        self.wallet_kp,
+                        token_address,
+                        balance_raw,
+                        slippage_bps=2000,
+                    )
+                    return ok
+                logger.warning("Jupiter: saldo zero ou indisponível")
+
             return False
         except Exception as e:
             logger.error(f"Erro ao executar VENDA: {e}", exc_info=True)
