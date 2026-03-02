@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     STOP_LOSS_PERCENT: float = Field(default=30.0, env="STOP_LOSS_PERCENT")
     TAKE_PROFIT_PERCENT1: float = Field(default=50.0, env="TAKE_PROFIT_PERCENT1")
     TAKE_PROFIT_PERCENT2: float = Field(default=200.0, env="TAKE_PROFIT_PERCENT2")
+    # Buffer para TP1: reduz o threshold para garantir que pegue o movimento (ex: 80% = 0.8, 100% = desabilitado)
+    TAKE_PROFIT_BUFFER: float = Field(default=0.8, env="TAKE_PROFIT_BUFFER")
     MAX_HOLDING_MINUTES: int = Field(default=30, env="MAX_HOLDING_MINUTES")
     MAX_CONCURRENT_POSITIONS: int = Field(default=3, env="MAX_CONCURRENT_POSITIONS")
     MAX_DAILY_LOSS_USD: float = Field(default=10.0, env="MAX_DAILY_LOSS_USD")
@@ -71,7 +73,7 @@ class Settings(BaseSettings):
     # Fallback de Priority Fee em SOL caso não use RPC Helius (0.001 SOL = ~$0.15, super competitivo)
     PRIORITY_FEE_FALLBACK_SOL: float = Field(default=0.001, env="PRIORITY_FEE_FALLBACK_SOL")
     # Intervalo (s) entre checagens de preço no monitoramento (Jupiter); 15s economiza créditos e é suficiente para SL/TP
-    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=15, env="MONITOR_PRICE_INTERVAL_SECONDS")
+    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=2, env="MONITOR_PRICE_INTERVAL_SECONDS")
     # Ao iniciar: vender tokens na carteira que não estão em positions.json (resíduos)
     AUTO_CLEANUP_ON_STARTUP: bool = Field(default=False, env="AUTO_CLEANUP_ON_STARTUP")
 

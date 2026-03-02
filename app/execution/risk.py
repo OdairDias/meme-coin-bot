@@ -254,9 +254,11 @@ class MemeRiskManager:
 
         # Take profit 1 (parcial): só dispara se ainda temos 100% (não fechamos parcial antes)
         # Verificar ANTES do TP2 para garantir que 50% seja vendido no TP1
+        # Buffer: permite pegar o TP1 com slight antecipação (ex: 80% do target)
+        tp1_threshold = settings.TAKE_PROFIT_PERCENT1 * getattr(settings, 'TAKE_PROFIT_BUFFER', 1.0)
         qty = pos.get("quantity", "100%")
         is_full_position = qty == "100%" or (isinstance(qty, str) and "100" in qty)
-        if is_full_position and pnl_percent >= settings.TAKE_PROFIT_PERCENT1:
+        if is_full_position and pnl_percent >= tp1_threshold:
             return "TAKE_PROFIT_PARTIAL"
 
         # Take profit 2 (full): só após TP1 ter fechado 50%
