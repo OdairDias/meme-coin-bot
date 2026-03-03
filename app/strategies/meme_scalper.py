@@ -85,20 +85,25 @@ class MemeScalperStrategy:
             if volume_usd > 0:
                 asset["volume_24h"] = volume_usd
 
-            # DexScreener: volume/liquidez quando volume do OHLCV baixo ou market_cap ausente
-            if (asset.get("volume_24h") or 0) < 100 or (asset.get("market_cap") or 0) <= 0:
-                try:
-                    info = await dexscreener.get_token_info(token_address)
-                    if info:
-                        asset["volume_24h"] = info.get("volume_24h") or asset.get("volume_24h", 0)
-                        asset["liquidity_usd"] = info.get("liquidity_usd") or asset.get("liquidity_usd", 0)
-                        asset["price_usd"] = info.get("price_usd") or asset.get("price_usd")
-                        if info.get("market_cap"):
-                            asset["market_cap"] = info.get("market_cap")
-                except Exception:
-                    pass
+            # DexScreener: SEMPRE busca para obter o preço atual de mercado.
+            # O preço do OHLCV (last_price) pode ser de minutos atrás — para tokens que já
+            # subiram muito durante o delay de indexação, usar preço stale como entry causa
+            # ganhos/perdas fantasmas (ex: +8198% reportado mas gain real de 3%).
+            try:
+                info = await dexscreener.get_token_info(token_address)
+                if info:
+                    # Preço atual: DexScreener é a fonte mais confiável para entry
+                    dex_price = info.get("price_usd") or 0
+                    if dex_price > 0:
+                        asset["price_usd"] = dex_price
+                    asset["volume_24h"] = info.get("volume_24h") or asset.get("volume_24h", 0)
+                    asset["liquidity_usd"] = info.get("liquidity_usd") or asset.get("liquidity_usd", 0)
+                    if info.get("market_cap"):
+                        asset["market_cap"] = info.get("market_cap")
+            except Exception:
+                pass
 
-            # Preço USD: pattern last_price (SOL) * sol_price; ou DexScreener se já chamamos
+            # Fallback: OHLCV last_price * sol_price (caso DexScreener não tenha o token ainda)
             last_price_sol = pattern_meta.get("last_price", 0) or 0
             if last_price_sol > 0 and not asset.get("price_usd"):
                 asset["price_usd"] = last_price_sol * sol_price
