@@ -84,8 +84,9 @@ class MemeRiskManager:
             validation["valid"] = False
             validation["reasons"].append(f"Max posições simultâneas ({settings.MAX_CONCURRENT_POSITIONS}) atingido")
 
-        # 2. Verificar daily loss limit
-        if abs(self.daily_loss) >= settings.MAX_DAILY_LOSS_USD:
+        # 2. Verificar daily loss limit (só bloqueia se a PERDA acumulada do dia >= limite)
+        # BUGFIX: abs() disparava o bloqueio em lucros também (ex: +$245 bloqueava o bot)
+        if self.daily_loss <= -abs(settings.MAX_DAILY_LOSS_USD):
             validation["valid"] = False
             validation["reasons"].append(f"Daily loss limit (${settings.MAX_DAILY_LOSS_USD}) atingido")
 
