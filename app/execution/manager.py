@@ -76,14 +76,34 @@ class PositionManager:
 
             signal_entry = signal["entry_price"]
 
+            # Busca o preço REAL pós-compra via DexScreener/Jupiter.
+            # O sinal é gerado com o preço do momento da detecção, mas o OHLCV
+            # leva 120-300s para indexar — nesse tempo o token pode ter subido muito.
+            # Usar entry stale causa ganhos/perdas fantasmas (ex: +8198% com gain real de 3%).
+            actual_entry = signal_entry
+            if self.price_fetcher:
+                try:
+                    fetched_info = await self.price_fetcher.get_token_info(signal["address"])
+                    fetched_price = float(fetched_info.get("price_usd", 0)) if fetched_info else 0.0
+                    if fetched_price > 0:
+                        actual_entry = fetched_price
+                        diff_pct = abs(actual_entry - signal_entry) / max(signal_entry, 1e-18) * 100
+                        if diff_pct > 10:
+                            logger.info(
+                                f"Entry real (pós-compra): ${actual_entry:.8f} vs sinal=${signal_entry:.8f} "
+                                f"(token subiu {diff_pct:.0f}% durante delay de OHLCV)"
+                            )
+                except Exception as e:
+                    logger.debug(f"Fetch entry pós-compra falhou: {e}")
+
             if settings.USE_CONSERVATIVE_ENTRY:
-                entry_for_sl_tp = signal_entry * (1.0 + settings.DEFAULT_SLIPPAGE / 100.0)
+                entry_for_sl_tp = actual_entry * (1.0 + settings.DEFAULT_SLIPPAGE / 100.0)
                 logger.info(
-                    f"Entry conservador: sinal=${signal_entry:.8f} → entry_sl_tp=${entry_for_sl_tp:.8f} "
+                    f"Entry conservador: atual=${actual_entry:.8f} → entry_sl_tp=${entry_for_sl_tp:.8f} "
                     f"(+{settings.DEFAULT_SLIPPAGE:.0f}% slippage)"
                 )
             else:
-                entry_for_sl_tp = signal_entry
+                entry_for_sl_tp = actual_entry
 
             qty_for_record = "100%" if buy_in_sol else signal["quantity"]
             await self.risk_manager.record_position_open(
@@ -96,7 +116,7 @@ class PositionManager:
             )
 
             log_qty = f"{buy_amount} SOL" if buy_in_sol else f"qty={signal['quantity']:.6f}"
-            logger.info(f"✅ Posição aberta: {signal['symbol']} {log_qty} @ ${entry_for_sl_tp:.6f} (sinal=${signal_entry:.6f})")
+            logger.info(f"✅ Posição aberta: {signal['symbol']} {log_qty} @ ${entry_for_sl_tp:.8f} (sinal=${signal_entry:.8f})")
             if self.alerter:
                 try:
                     qty_alert = buy_amount if buy_in_sol else signal["quantity"]
@@ -163,7 +183,7 @@ class PositionManager:
                     pnl_percent = ((entry - current_price) / entry * 100) if entry > 0 else 0
                 
                 buy_amount_sol = pos.get("buy_amount_sol", 0)
-                sol_price_usd = 150.0
+                sol_price_usd = 100.0
                 try:
                     from app.scanners.jupiter import get_sol_price_usd
                     fetched = await get_sol_price_usd()
@@ -242,7 +262,7 @@ class PositionManager:
 
             pnl_percent = ((current_price - entry) / entry * 100) if (side == "BUY" and entry > 0) else 0
             buy_amount_sol = pos.get("buy_amount_sol", 0)
-            sol_price_usd = 150.0
+            sol_price_usd = 100.0
             try:
                 from app.scanners.jupiter import get_sol_price_usd
                 fetched = await get_sol_price_usd()

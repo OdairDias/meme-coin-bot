@@ -169,7 +169,7 @@ class MemeRiskManager:
                 pnl_percent = ((exit_price - entry) / entry) * 100 if entry > 0 else 0
             else:
                 pnl_percent = ((entry - exit_price) / entry) * 100 if entry > 0 else 0
-            sol_price_usd = 150.0
+            sol_price_usd = 100.0
             try:
                 from app.scanners.jupiter import get_sol_price_usd
                 fetched = await get_sol_price_usd()
