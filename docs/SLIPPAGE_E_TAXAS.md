@@ -1,87 +1,82 @@
 # Slippage e taxas (derrapagem)
 
-Resumo do que o bot usa hoje e até quanto pode “pagar” de derrapagem em cada operação.
+Resumo atualizado após Fase 2 — o slippage de compra agora é **dinâmico por liquidez**.
 
-## Compra (BUY)
+---
 
-| Origem | Valor | Observação |
-|--------|--------|------------|
-| **DEFAULT_SLIPPAGE** (config) | **30%** (padrão) | Usado quando o manager não passa slippage (sempre). Pode alterar no `.env`: `DEFAULT_SLIPPAGE=25` (ex.: 25%). |
-| Mínimo no código | 15% | Se `DEFAULT_SLIPPAGE` for menor que 15, o executor usa 15% na compra. |
+## Compra (BUY) — Slippage dinâmico por liquidez (Fase 2)
 
-**Resposta direta:** na compra estamos pagando até **30%** de slippage (ou o valor que você definir em `DEFAULT_SLIPPAGE` no `.env`).
+O `DEFAULT_SLIPPAGE` fixo foi substituído por um sistema de tiers baseado na liquidez USD do token (via DexScreener). Variáveis configuráveis no Railway:
+
+| Tier | Liquidez USD do token | Variável Railway | Valor padrão |
+|------|-----------------------|-----------------|--------------|
+| Baixa / desconhecida | < $5.000 ou sem dado | `SLIPPAGE_TIER_LOW` | **25%** |
+| Média | $5.000 – $30.000 | `SLIPPAGE_TIER_MID` | **15%** |
+| Alta | > $30.000 | `SLIPPAGE_TIER_HIGH` | **10%** |
+
+**Resposta direta:** na compra pagamos entre **10% e 25%** dependendo da liquidez do token. Tokens novos (liquidez desconhecida) usam o tier mais alto (25%) por segurança.
+
+> `DEFAULT_SLIPPAGE` permanece no código como fallback para o `sell()`, mas não é mais usado na compra direta via `executor.buy()`.
 
 ---
 
 ## Venda (SELL)
 
 | Etapa | Slippage | Observação |
-|--------|----------|------------|
+|-------|----------|------------|
 | 1ª tentativa (PumpPortal) | **10%** | Fixo no código. |
 | Retry com pool=raydium | **20%** | Fixo. |
 | Fallback Jupiter V6 | **20%** (2000 bps) | Fixo. |
+| Emergency sell | **50%** | Acionado quando queda > SL + `EMERGENCY_SELL_THRESHOLD` numa checagem. |
 
-**Resposta direta:** na venda, primeira tentativa até **10%**; em retries e Jupiter até **20%**.
+**Resposta direta:** na venda normal, primeira tentativa até **10%**; em retries e Jupiter até **20%**. Emergency sell usa 50% para garantir execução.
 
 ---
 
 ## Outros fluxos
 
 | Fluxo | Slippage | Arquivo |
-|--------|----------|---------|
+|-------|----------|---------|
 | Auto-cleanup no startup | 25% | `startup_cleanup.py` |
 | Force-sell-all (emergência) | 25% | `force_sell.py` |
 
 ---
 
-## Parciais e stop (seus ajustes)
+## Parciais e stop (suas configurações no Railway)
 
-- **Stop loss:** `STOP_LOSS_PERCENT` — padrão no código agora **30%** (você comentou que 20% batia na cara e 40% ficava caro com a derrapagem; 30% é o novo default).
-- **1ª parcial (TP1):** `TAKE_PROFIT_PERCENT1` — padrão **50%**.
-- **2ª parcial / full (TP2):** `TAKE_PROFIT_PERCENT2` — padrão **200%**.
-
-Tudo isso pode ser sobrescrito no `.env` (ex.: `STOP_LOSS_PERCENT=30`, `TAKE_PROFIT_PERCENT1=50`, `TAKE_PROFIT_PERCENT2=200`).
+- **Stop loss:** `STOP_LOSS_PERCENT` (Railway).
+- **Emergency sell:** `EMERGENCY_SELL_THRESHOLD` — threshold adicional além do SL para acionar venda imediata com slippage 50%.
+- **1ª parcial (TP1):** `TAKE_PROFIT_PERCENT1` — fecha 50% da posição.
+- **2ª parcial / full (TP2):** `TAKE_PROFIT_PERCENT2` — fecha o restante (50%).
 
 ---
 
 ## Resumo rápido
 
-- **Compra:** até **30%** (config `DEFAULT_SLIPPAGE`).
-- **Venda 1ª tentativa:** **10%**.
-- **Venda retry/Jupiter:** **20%**.
-- **Cleanup / force-sell:** **25%**.
-
-Se quiser reduzir o custo de derrapagem na compra, baixe o `DEFAULT_SLIPPAGE` no `.env` (ex.: 25); em memecoins muito voláteis, valores muito baixos podem aumentar a quantidade de ordens que falham por slippage (6024).
+| Operação | Slippage |
+|----------|----------|
+| Compra — liq < $5k ou desconhecida | **25%** (`SLIPPAGE_TIER_LOW`) |
+| Compra — liq $5k–$30k | **15%** (`SLIPPAGE_TIER_MID`) |
+| Compra — liq > $30k | **10%** (`SLIPPAGE_TIER_HIGH`) |
+| Venda 1ª tentativa | **10%** |
+| Venda retry / Jupiter | **20%** |
+| Emergency sell | **50%** |
+| Cleanup / force-sell | **25%** |
 
 ---
 
 ## Como a derrapagem afeta o stop loss e o take profit
 
-O bot registra **entry_price** = preço do sinal (cotação **antes** da ordem de compra). Não usamos o preço de execução real após o fill. Por isso:
+O bot registra `entry_price` = preço pós-compra (fetched via DexScreener logo após a ordem). Com `USE_CONSERVATIVE_ENTRY=true` (padrão), usa `entry_price × (1 + slippage/100)` como base — assim o PnL já desconta a derrapagem de entrada.
 
-- **Na compra:** com 30% de slippage você pode **pagar até 30% a mais** que esse `entry_price`. Ou seja, seu custo real pode ser até ~**1,30 × entry_price**.
-- **Na venda:** com 10–20% de slippage você pode **receber até 10–20% a menos** que a cotação no momento do gatilho.
+### Stop loss
+- Disparado quando **PnL ≤ -STOP_LOSS_PERCENT**.
+- Com entry conservador, o stop nominal já se aproxima do prejuízo real.
 
-### Stop loss (ex.: 30%)
+### Take profit
+- TP1 disparado quando **PnL ≥ TAKE_PROFIT_PERCENT1** → vende 50%.
+- TP2 disparado quando **PnL ≥ TAKE_PROFIT_PERCENT2** → vende o restante (50%).
+- Com entry conservador, os TPs exigem uma alta maior de preço para disparar, refletindo o ganho real após slippage de entrada.
 
-- O bot dispara o stop quando **PnL ≤ -30%**, usando `(preço_atual - entry_price) / entry_price`.
-- Como o custo real pode ser até 30% maior que `entry_price`, quando o bot acha que você está em **-30%**, seu prejuízo **real** pode ser da ordem de **-46%** (ex.: pagou 1,30×, preço caiu para 0,70× → perda real (0,70 - 1,30)/1,30 ≈ -46%).
-- Na saída, a venda com 10–20% de slippage piora um pouco mais o preço realizado.
-
-**Conclusão:** o stop nominal de 30% pode corresponder a um **prejuízo real maior** (por volta de 40–50% no pior caso de derrapagem na entrada e na saída).
-
-### Take profit (ex.: 50% e 200%)
-
-- O bot dispara TP quando **PnL ≥ 50%** ou **≥ 200%** em relação ao `entry_price`.
-- Como o custo real pode ser até 30% maior, quando o bot acha **+50%**, seu ganho **real** pode ser bem menor (ex.: pagou 1,30×, preço em 1,50× → ganho real (1,50 - 1,30)/1,30 ≈ **+15%**). Na saída, a derrapagem na venda reduz um pouco o valor realizado.
-- No TP de 200% o efeito é menor em %, mas ainda assim o ganho realizado fica abaixo do nominal.
-
-**Conclusão:** os take profits nominais (50% e 200%) podem corresponder a **ganhos reais menores** por causa da derrapagem na entrada e na saída.
-
-### Entry conservador (implementado)
-
-O bot passou a usar **entry_price conservador** por padrão: `entry_price = preço_do_sinal × (1 + DEFAULT_SLIPPAGE/100)`. Assim o PnL e os gatilhos de SL/TP são calculados em cima de um custo “pior caso”, alinhado ao que você pode pagar na compra com derrapagem.
-
-- **Ativar/desativar:** no `.env`, `USE_CONSERVATIVE_ENTRY=true` (padrão) ou `false`.
-- Com `true`: o stop de 30% nominal se aproxima de um prejuízo real de ~30%; os TPs exigem mais alta de preço para disparar, refletindo melhor o ganho real.
-- Com `false`: volta ao comportamento antigo (entry = preço do sinal, com a discrepância descrita acima).
+### Entry conservador
+- Ativar/desativar: `USE_CONSERVATIVE_ENTRY=true` (padrão) ou `false` no Railway.

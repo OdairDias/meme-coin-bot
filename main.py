@@ -36,12 +36,90 @@ executor: Executor | None = None
 risk_manager: MemeRiskManager | None = None
 position_manager: PositionManager | None = None
 alerter: TelegramAlerter | None = None
+strategy: MemeScalperStrategy | None = None
+
+# Fase 3 — Fila de prioridade para processamento de tokens
+# Items: (priority, queued_at, token_data, rescan_count)
+# priority = -market_cap  →  maior market_cap é processado primeiro
+_token_queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=500)
+
+
+async def _process_token(token_data: dict, rescan_count: int = 0) -> None:
+    """
+    Constrói OHLCV (CandleBuilder ou sleep+Bitquery) e gera sinais de compra.
+    Chamado pelos workers da fila de prioridade (Fase 3).
+    """
+    if strategy is None or position_manager is None:
+        return
+
+    _sym = token_data.get("symbol", "?")
+    _addr = token_data.get("address") or token_data.get("mint")
+    prebuilt = None
+
+    if getattr(settings, "USE_REALTIME_CANDLES", False) and rescan_count == 0 and _addr:
+        logger.info(f"📊 CandleBuilder ativo para {_sym} — coletando preços em tempo real...")
+        prebuilt = await candle_builder.build_candles(_addr)
+        if prebuilt:
+            logger.info(f"✅ CandleBuilder: {len(prebuilt['ohlcv'])} candles para {_sym}")
+        else:
+            logger.info(f"⚠️ CandleBuilder insuficiente para {_sym} — usando Bitquery/Birdeye como fallback")
+    else:
+        delay = settings.BIRDEYE_DELAY_SECONDS if rescan_count == 0 else settings.RESCAN_DELAY_SECONDS
+        if delay > 0:
+            if rescan_count == 0:
+                logger.info(f"⏳ Aguardando {delay}s para {_sym} (OHLCV)")
+            else:
+                logger.info(f"🔄 Re-analisando {_sym} ({rescan_count}/{settings.MAX_RESCAN_ATTEMPTS}) em {delay}s")
+            await asyncio.sleep(delay)
+
+    try:
+        signals = await strategy.generate_signals([token_data], prebuilt_ohlcv=prebuilt)
+        for signal in signals:
+            await position_manager.open_position(signal)
+
+        # Re-scan: se nenhum sinal, colocar de volta na fila com prioridade idêntica
+        max_rescans = settings.MAX_RESCAN_ATTEMPTS
+        if not signals and rescan_count < max_rescans - 1 and settings.RESCAN_DELAY_SECONDS > 0:
+            mc = token_data.get("market_cap", 0) or 0
+            try:
+                _token_queue.put_nowait((-mc, time.time(), token_data, rescan_count + 1))
+            except asyncio.QueueFull:
+                logger.debug(f"Fila cheia — rescan de {_sym} descartado")
+    except Exception as e:
+        logger.error(f"Erro ao processar token {_sym}: {e}")
+
+
+async def _token_queue_worker() -> None:
+    """
+    Worker da fila de prioridade — puxa tokens em ordem de market_cap (maior primeiro)
+    e chama _process_token. Roda em background durante o ciclo de vida do bot.
+    """
+    while True:
+        try:
+            priority, queued_at, token_data, rescan_count = await asyncio.wait_for(
+                _token_queue.get(), timeout=60.0
+            )
+            max_age = getattr(settings, "TOKEN_QUEUE_MAX_AGE_SECONDS", 600)
+            age = time.time() - queued_at
+            if age > max_age:
+                sym = token_data.get("symbol", "?")
+                logger.debug(f"⏭️ Token {sym} expirou na fila ({age:.0f}s > {max_age}s) — descartado")
+                _token_queue.task_done()
+                continue
+            await _process_token(token_data, rescan_count)
+            _token_queue.task_done()
+        except asyncio.TimeoutError:
+            continue
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Queue worker erro: {e}", exc_info=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle do FastAPI."""
-    global pump_scanner, birdeye, candle_builder, executor, risk_manager, position_manager, alerter
+    global pump_scanner, birdeye, candle_builder, executor, risk_manager, position_manager, alerter, strategy
 
     # Startup
     logger.info("🚀 Iniciando MemeCoin Bot...")
@@ -67,7 +145,7 @@ async def lifespan(app: FastAPI):
 
     # 4) Inicializar strategy e registrar callback do scanner
     strategy = MemeScalperStrategy(birdeye)
-    async def on_new_token(token_data: dict):
+    async def on_new_token(token_data: dict):  # noqa: E306
         """Processa novo token do PumpPortal (com delay para OHLCV na Bitquery/Birdeye)."""
         # Tokens já migrados (pool=raydium) continuam sendo analisados; a compra será feita via pool=raydium
         # Pré-filtro: market cap mínimo (50 SOL)
@@ -106,43 +184,15 @@ async def lifespan(app: FastAPI):
                     if _symbol_analyzing[k] < cutoff:
                         del _symbol_analyzing[k]
 
-        async def process_after_delay(rescan_count: int = 0):
-            """Constrói OHLCV (CandleBuilder em tempo real ou sleep+Bitquery) e gera sinais."""
-            _sym = token_data.get("symbol", "?")
-            _addr = token_data.get("address") or token_data.get("mint")
-            prebuilt: dict | None = None
-
-            # CandleBuilder substitui o sleep fixo quando USE_REALTIME_CANDLES=True
-            if getattr(settings, "USE_REALTIME_CANDLES", False) and rescan_count == 0 and _addr:
-                logger.info(f"📊 CandleBuilder ativo para {_sym} — coletando preços em tempo real...")
-                prebuilt = await candle_builder.build_candles(_addr)
-                if prebuilt:
-                    logger.info(f"✅ CandleBuilder: {len(prebuilt['ohlcv'])} candles para {_sym}")
-                else:
-                    logger.info(f"⚠️ CandleBuilder insuficiente para {_sym} — usando Bitquery/Birdeye como fallback")
-            else:
-                delay = settings.BIRDEYE_DELAY_SECONDS if rescan_count == 0 else settings.RESCAN_DELAY_SECONDS
-                if delay > 0:
-                    if rescan_count == 0:
-                        logger.info(f"⏳ Aguardando {delay}s para {_sym} (OHLCV)")
-                    else:
-                        logger.info(f"🔄 Re-analisando {_sym} ({rescan_count}/{settings.MAX_RESCAN_ATTEMPTS}) em {delay}s")
-                    await asyncio.sleep(delay)
-
-            try:
-                assets = [token_data]
-                signals = await strategy.generate_signals(assets, prebuilt_ohlcv=prebuilt)
-                for signal in signals:
-                    await position_manager.open_position(signal)
-                # Re-scan: se 0 sinais e ainda há tentativas, agendar retry
-                max_rescans = settings.MAX_RESCAN_ATTEMPTS
-                if not signals and rescan_count < max_rescans - 1 and settings.RESCAN_DELAY_SECONDS > 0:
-                    asyncio.create_task(process_after_delay(rescan_count=rescan_count + 1))
-            except Exception as e:
-                logger.error(f"Erro ao processar novo token: {e}")
-
-        # Rodar em task separada para não bloquear recebimento de novos tokens
-        asyncio.create_task(process_after_delay(rescan_count=0))
+        # Fase 3: Colocar na fila de prioridade (market_cap mais alto = processado primeiro)
+        mc = market_cap or 0
+        try:
+            _token_queue.put_nowait((-mc, now, token_data, 0))
+            logger.debug(
+                f"📥 {symbol} adicionado à fila (mc={mc:.0f} SOL, fila={_token_queue.qsize()})"
+            )
+        except asyncio.QueueFull:
+            logger.warning(f"⚠️ Fila de tokens cheia ({_token_queue.maxsize}) — {symbol} descartado")
 
     pump_scanner.register_callback(on_new_token)
     pump_scanner.set_alerter(alerter)
@@ -155,6 +205,15 @@ async def lifespan(app: FastAPI):
     await pump_scanner.connect()
     asyncio.create_task(pump_scanner.start())  # loop que recebe mensagens do WebSocket
     await position_manager.start()
+
+    # Fase 3: workers da fila de prioridade
+    n_workers = getattr(settings, "TOKEN_QUEUE_WORKERS", 3)
+    _queue_workers = [asyncio.create_task(_token_queue_worker()) for _ in range(n_workers)]
+    logger.info(f"📥 Fila de prioridade ativa — {n_workers} worker(s) aguardando tokens")
+
+    # Fase 3: listener de comandos Telegram (/report, /status)
+    await alerter.set_risk_manager(risk_manager)
+    asyncio.create_task(alerter.start_command_listener())
 
     # 6b) Auto-cleanup: vender resíduos (tokens na carteira fora de positions.json)
     if getattr(settings, "AUTO_CLEANUP_ON_STARTUP", False):
@@ -175,6 +234,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("🛑 Encerrando bot...")
+    # Cancelar workers da fila
+    for w in _queue_workers:
+        w.cancel()
+    await alerter.stop_command_listener()
     if position_manager:
         await position_manager.stop()
     if pump_scanner:

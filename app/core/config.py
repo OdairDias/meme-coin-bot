@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     NO_TOKEN_ALERT_SECONDS: int = Field(default=300, env="NO_TOKEN_ALERT_SECONDS")
     HEARTBEAT_INTERVAL_MINUTES: int = Field(default=30, env="HEARTBEAT_INTERVAL_MINUTES")
 
+    # Fase 3 — PriorityQueue para processamento de tokens
+    # Número de workers simultâneos puxando tokens da fila
+    TOKEN_QUEUE_WORKERS: int = Field(default=3, env="TOKEN_QUEUE_WORKERS")
+    # Tempo máximo (segundos) que um token pode aguardar na fila antes de ser descartado
+    TOKEN_QUEUE_MAX_AGE_SECONDS: int = Field(default=600, env="TOKEN_QUEUE_MAX_AGE_SECONDS")
+
     # Fase 2 — Jito Bundles (proteção MEV; desabilitado por padrão)
     USE_JITO: bool = Field(default=False, env="USE_JITO")
     JITO_TIP_LAMPORTS: int = Field(default=50000, env="JITO_TIP_LAMPORTS")
