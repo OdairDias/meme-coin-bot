@@ -99,6 +99,18 @@ class Settings(BaseSettings):
     NO_TOKEN_ALERT_SECONDS: int = Field(default=300, env="NO_TOKEN_ALERT_SECONDS")
     HEARTBEAT_INTERVAL_MINUTES: int = Field(default=30, env="HEARTBEAT_INTERVAL_MINUTES")
 
+    # Fase 2 — Jito Bundles (proteção MEV; desabilitado por padrão)
+    USE_JITO: bool = Field(default=False, env="USE_JITO")
+    JITO_TIP_LAMPORTS: int = Field(default=50000, env="JITO_TIP_LAMPORTS")
+
+    # Fase 2 — Slippage dinâmico por liquidez (substitui DEFAULT_SLIPPAGE fixo na compra)
+    # TIER_LOW  = slippage para tokens com baixa liquidez (< $5k)  → mais slippage necessário
+    # TIER_MID  = slippage para liquidez média ($5k–$30k)
+    # TIER_HIGH = slippage para alta liquidez (> $30k) → menos slippage necessário
+    SLIPPAGE_TIER_LOW: float = Field(default=25.0, env="SLIPPAGE_TIER_LOW")
+    SLIPPAGE_TIER_MID: float = Field(default=15.0, env="SLIPPAGE_TIER_MID")
+    SLIPPAGE_TIER_HIGH: float = Field(default=10.0, env="SLIPPAGE_TIER_HIGH")
+
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")
 

@@ -67,8 +67,9 @@ class PositionManager:
                 token_address=signal["address"],
                 amount=buy_amount,
                 denominated_in_sol=buy_in_sol,
-                slippage=0,
+                slippage=0,  # 0 = deixar executor calcular dinamicamente via _get_dynamic_slippage
                 pool=signal.get("pool", "auto"),
+                liquidity_usd=signal.get("liquidity_usd", 0),
             )
             if not success:
                 logger.error(f"Falha ao comprar {signal['symbol']}")

@@ -43,6 +43,15 @@ class Executor:
         self.wallet_kp = get_wallet_keypair(settings.WALLET_PRIVATE_KEY)
         self.wallet_address = str(self.wallet_kp.pubkey())
         self._helius_rpc = "helius" in (settings.get_rpc_url() or "").lower()
+        # Jito (opcional — ativo somente quando USE_JITO=true)
+        self._jito = None
+        if getattr(settings, "USE_JITO", False):
+            try:
+                from app.execution.jito_sender import JitoSender
+                self._jito = JitoSender(settings.get_rpc_url(), self.wallet_kp)
+                logger.info("Jito Bundle ativo — proteção MEV habilitada")
+            except Exception as e:
+                logger.warning(f"Jito init falhou (desabilitado): {e}")
         logger.info(f"Executor inicializado. Wallet: {self.wallet_address[:8]}... (RPC: {'Helius' if self._helius_rpc else 'público'})")
 
     def _payload(
@@ -305,7 +314,14 @@ class Executor:
                 return False, str(err)
 
             if _is_trade_local() and response.content:
-                txid = await self._sign_and_send_tx(response.content)
+                # Jito Bundle (USE_JITO=true) — proteção MEV; fallback normal se Jito falhar
+                if self._jito and action == "buy":
+                    txid = await self._jito.send_bundle(response.content)
+                    if not txid:
+                        logger.warning("Jito bundle falhou — enviando tx pelo RPC normal")
+                        txid = await self._sign_and_send_tx(response.content)
+                else:
+                    txid = await self._sign_and_send_tx(response.content)
                 if not txid:
                     return False, "Falha ao assinar/enviar tx"
                 logger.info(f"⏳ Aguardando confirmação on-chain da tx {txid[:20]}...")
@@ -327,6 +343,27 @@ class Executor:
         logger.error("Resposta inesperada do PumpPortal (nem JSON nem tx bytes)")
         return False, "Resposta inesperada"
 
+    def _get_dynamic_slippage(self, liquidity_usd: float) -> float:
+        """
+        Slippage dinâmico baseado na liquidez do token (Fase 2).
+        SLIPPAGE_TIER_LOW  (padrão 25%) para liq < $5k ou desconhecida
+        SLIPPAGE_TIER_MID  (padrão 15%) para liq $5k–$30k
+        SLIPPAGE_TIER_HIGH (padrão 10%) para liq > $30k
+        """
+        low = getattr(settings, "SLIPPAGE_TIER_LOW", 25.0)
+        mid = getattr(settings, "SLIPPAGE_TIER_MID", 15.0)
+        high = getattr(settings, "SLIPPAGE_TIER_HIGH", 10.0)
+
+        if liquidity_usd <= 0 or liquidity_usd < 5_000:
+            result = low
+        elif liquidity_usd < 30_000:
+            result = mid
+        else:
+            result = high
+
+        logger.debug(f"Slippage dinâmico: liq_usd={liquidity_usd:.0f} → {result}%")
+        return result
+
     async def buy(
         self,
         token_address: str,
@@ -335,6 +372,7 @@ class Executor:
         slippage: float = 0,
         priority_fee: float = 0,
         pool: str = "auto",
+        liquidity_usd: float = 0,
     ) -> bool:
         """
         Compra token via PumpPortal e verifica na blockchain o recebimento saldo antes de fechar o loop.
@@ -348,9 +386,8 @@ class Executor:
         if (pool or "auto").lower() == "raydium":
             logger.info(f"🔄 Compra via Raydium (token já migrado da bonding curve): {token_address[:12]}...")
 
-        # Memecoins requerem um slippage mais solto para compra inicial. Vamos garantir ao menos 15%.
-        def_slippage = getattr(settings, 'DEFAULT_SLIPPAGE', 15.0)
-        slippage = slippage if slippage > 0 else max(15.0, def_slippage)
+        # Slippage dinâmico por liquidez (Fase 2); fallback para DEFAULT_SLIPPAGE se liquidez desconhecida
+        slippage = slippage if slippage > 0 else self._get_dynamic_slippage(liquidity_usd)
         
         priority_fee = priority_fee if priority_fee > 0 else (
             await self._get_helius_priority_fee_sol() if self._helius_rpc else getattr(settings, "PRIORITY_FEE_FALLBACK_SOL", 0.0001)
