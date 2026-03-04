@@ -39,11 +39,15 @@ class MemeScalperStrategy:
         self,
         assets: List[Dict[str, Any]],
         prebuilt_ohlcv: Optional[Dict[str, Any]] = None,
+        skip_rugcheck: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Gera sinais a partir de assets pré-filtrados.
         prebuilt_ohlcv: candles já construídos pelo CandleBuilder (Fase 1).
                         Quando fornecido, pula a chamada ao Bitquery/Birdeye.
+        skip_rugcheck: True quando o RugCheck já foi executado antes do CandleBuilder
+                       (pré-check em _process_token) ou em rescans subsequentes.
+                       Evita chamada duplicada à API free-tier.
         """
         signals = []
 
@@ -58,8 +62,9 @@ class MemeScalperStrategy:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado (filtro): {reason}")
                 continue
 
-            # 1b) RugCheck: verifica score de risco antes de consumir quota do Bitquery
-            if getattr(settings, "RUGCHECK_ENABLED", False):
+            # 1b) RugCheck: verifica score de risco antes de consumir quota do Bitquery.
+            # Pulado quando skip_rugcheck=True (já verificado em _process_token antes do CandleBuilder).
+            if getattr(settings, "RUGCHECK_ENABLED", False) and not skip_rugcheck:
                 try:
                     from app.scanners.rugcheck import check_token
                     rc_pass, rc_score, rc_reason = await check_token(token_address)

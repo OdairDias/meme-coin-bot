@@ -56,6 +56,21 @@ async def _process_token(token_data: dict, rescan_count: int = 0) -> None:
     _addr = token_data.get("address") or token_data.get("mint")
     prebuilt = None
 
+    # RugCheck ANTES do CandleBuilder — evita desperdiçar 90s em tokens ruins.
+    # Só no primeiro scan (rescan_count == 0): rescans já foram pré-aprovados.
+    # Se reprovar: return imediato sem enfileirar rescan.
+    _rugcheck_passed = False
+    if getattr(settings, "RUGCHECK_ENABLED", False) and _addr and rescan_count == 0:
+        try:
+            from app.scanners.rugcheck import check_token
+            rc_pass, _, rc_reason = await check_token(_addr)
+            if not rc_pass:
+                logger.info(f"⏭️ {_sym} rejeitado RugCheck (pré-CandleBuilder): {rc_reason}")
+                return  # sem CandleBuilder, sem rescan
+            _rugcheck_passed = True
+        except Exception as e:
+            logger.debug(f"RugCheck pré-check erro (ignorado): {e}")
+
     if getattr(settings, "USE_REALTIME_CANDLES", False) and rescan_count == 0 and _addr:
         logger.info(f"📊 CandleBuilder ativo para {_sym} — coletando preços em tempo real...")
         prebuilt = await candle_builder.build_candles(_addr)
@@ -73,7 +88,13 @@ async def _process_token(token_data: dict, rescan_count: int = 0) -> None:
             await asyncio.sleep(delay)
 
     try:
-        signals = await strategy.generate_signals([token_data], prebuilt_ohlcv=prebuilt)
+        # skip_rugcheck=True quando:
+        # - rescan_count == 0 e RugCheck já passou no pré-check acima (_rugcheck_passed)
+        # - rescan_count > 0: token já foi aprovado no primeiro scan
+        _skip_rc = _rugcheck_passed or rescan_count > 0
+        signals = await strategy.generate_signals(
+            [token_data], prebuilt_ohlcv=prebuilt, skip_rugcheck=_skip_rc
+        )
         for signal in signals:
             await position_manager.open_position(signal)
 
