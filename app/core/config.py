@@ -76,8 +76,13 @@ class Settings(BaseSettings):
     # Fallback de Priority Fee em SOL caso não use RPC Helius (0.001 SOL = ~$0.15, super competitivo)
     PRIORITY_FEE_FALLBACK_SOL: float = Field(default=0.001, env="PRIORITY_FEE_FALLBACK_SOL")
     # Intervalo (s) entre checagens de preço no monitoramento (DexScreener + Jupiter fallback)
-    # 5s = rápido para SL em memecoins voláteis (15s era lento demais, SL disparava a -30%/-53% vs -20% target)
-    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=5, env="MONITOR_PRICE_INTERVAL_SECONDS")
+    # 3s = mais rápido para SL em memecoins voláteis (5s causava SL a -35%/-59% vs -20% target)
+    MONITOR_PRICE_INTERVAL_SECONDS: int = Field(default=3, env="MONITOR_PRICE_INTERVAL_SECONDS")
+    # Emergency sell: se o preço cair este % ALÉM do SL configurado em um único tick, vende com slippage alto (50%)
+    # Exemplo: SL=20%, EMERGENCY=15% → se pnl < -35% em um tick, emergency sell ativa
+    EMERGENCY_SELL_THRESHOLD: float = Field(default=15.0, env="EMERGENCY_SELL_THRESHOLD")
+    # Se True, retentar compra com priority_fee * 1.5 quando tx não é encontrada por timeout (evita gas perdido)
+    BUY_RETRY_ON_TIMEOUT: bool = Field(default=True, env="BUY_RETRY_ON_TIMEOUT")
     # Ao iniciar: vender tokens na carteira que não estão em positions.json (resíduos)
     AUTO_CLEANUP_ON_STARTUP: bool = Field(default=False, env="AUTO_CLEANUP_ON_STARTUP")
 

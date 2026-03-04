@@ -66,12 +66,12 @@ def save_positions(positions: Dict[str, Dict[str, Any]]):
         logger.error(f"Erro ao salvar positions.json: {e}")
 
 
-def add_position(token: str, entry_price: float, quantity: str | float, symbol: str = "", amount_raw: Optional[int] = None):
+def add_position(token: str, entry_price: float, quantity: str | float, symbol: str = "", amount_raw: Optional[int] = None, buy_amount_sol: float = 0.0):
     """Adiciona ou atualiza posição (Postgres ou JSON)."""
     if _use_db():
         try:
             from app.db.postgres import add_position_to_db
-            if add_position_to_db(token, entry_price, quantity, symbol or token[:8], amount_raw):
+            if add_position_to_db(token, entry_price, quantity, symbol or token[:8], amount_raw, buy_amount_sol):
                 logger.debug(f"Posição salva (Postgres): {token[:12]}...")
                 return
         except Exception as e:
@@ -87,6 +87,7 @@ def add_position(token: str, entry_price: float, quantity: str | float, symbol: 
         "opened_at": datetime.now(timezone.utc).isoformat(),
         "current_price": entry_price,
         "amount_raw": amount_raw,
+        "buy_amount_sol": buy_amount_sol,
     }
     save_positions(positions)
     logger.debug(f"Posição salva em positions.json: {token[:12]}...")

@@ -68,14 +68,14 @@ def load_positions_from_db() -> Dict[str, Dict[str, Any]]:
             cur.execute(
                 """
                 SELECT token, symbol, entry_price, quantity, side,
-                       opened_at, current_price, amount_raw
+                       opened_at, current_price, amount_raw, buy_amount_sol
                 FROM positions
                 """
             )
             rows = cur.fetchall()
         result = {}
         for r in rows:
-            token, symbol, entry_price, quantity, side, opened_at, current_price, amount_raw = r
+            token, symbol, entry_price, quantity, side, opened_at, current_price, amount_raw, buy_amount_sol = r
             opened_at = opened_at.isoformat() if hasattr(opened_at, "isoformat") else str(opened_at)
             result[token] = {
                 "token": token,
@@ -86,6 +86,7 @@ def load_positions_from_db() -> Dict[str, Dict[str, Any]]:
                 "opened_at": opened_at,
                 "current_price": float(current_price or entry_price),
                 "amount_raw": int(amount_raw) if amount_raw is not None else None,
+                "buy_amount_sol": float(buy_amount_sol) if buy_amount_sol is not None else 0.0,
             }
         return result
     except Exception as e:
@@ -101,6 +102,7 @@ def add_position_to_db(
     quantity: str | float,
     symbol: str = "",
     amount_raw: Optional[int] = None,
+    buy_amount_sol: float = 0.0,
 ) -> bool:
     """Insere ou atualiza posição (upsert)."""
     conn = _get_connection()
@@ -110,16 +112,17 @@ def add_position_to_db(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO positions (token, symbol, entry_price, quantity, side, current_price, amount_raw)
-                VALUES (%s, %s, %s, %s, 'BUY', %s, %s)
+                INSERT INTO positions (token, symbol, entry_price, quantity, side, current_price, amount_raw, buy_amount_sol)
+                VALUES (%s, %s, %s, %s, 'BUY', %s, %s, %s)
                 ON CONFLICT (token) DO UPDATE SET
                     symbol = EXCLUDED.symbol,
                     entry_price = EXCLUDED.entry_price,
                     quantity = EXCLUDED.quantity,
                     current_price = EXCLUDED.current_price,
-                    amount_raw = EXCLUDED.amount_raw
+                    amount_raw = EXCLUDED.amount_raw,
+                    buy_amount_sol = EXCLUDED.buy_amount_sol
                 """,
-                (token, symbol or token[:8], entry_price, str(quantity), entry_price, amount_raw),
+                (token, symbol or token[:8], entry_price, str(quantity), entry_price, amount_raw, buy_amount_sol),
             )
         conn.commit()
         logger.debug(f"Posição salva no Postgres: {token[:12]}...")

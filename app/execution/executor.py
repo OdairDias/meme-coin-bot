@@ -356,7 +356,7 @@ class Executor:
             await self._get_helius_priority_fee_sol() if self._helius_rpc else getattr(settings, "PRIORITY_FEE_FALLBACK_SOL", 0.0001)
         )
         try:
-            success, _ = await self._execute(
+            success, error = await self._execute(
                 action="buy",
                 token_address=token_address,
                 amount=amount,
@@ -365,6 +365,22 @@ class Executor:
                 priority_fee=priority_fee,
                 pool=pool,
             )
+            # Retry em timeout: tx não encontrada → retentar com priority_fee +50% para garantir inclusão
+            if not success and getattr(settings, "BUY_RETRY_ON_TIMEOUT", True):
+                if error and ("timeout" in (error or "").lower() or "não encontrada" in (error or "").lower()):
+                    priority_fee_retry = priority_fee * 1.5
+                    logger.info(
+                        f"🔄 BUY timeout — retry com priority_fee={priority_fee_retry:.6f} SOL (+50%): {token_address[:12]}"
+                    )
+                    success, error = await self._execute(
+                        action="buy",
+                        token_address=token_address,
+                        amount=amount,
+                        denominated_in_sol=denominated_in_sol,
+                        slippage=slippage,
+                        priority_fee=priority_fee_retry,
+                        pool=pool,
+                    )
             if not success:
                 return False
 

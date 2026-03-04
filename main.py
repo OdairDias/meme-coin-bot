@@ -24,6 +24,8 @@ logger = setup_logger(__name__)
 
 # Anti-clone: symbol -> timestamp da última análise iniciada
 _symbol_analyzing: dict[str, float] = {}
+# Anti-clone por marketCapSol: mesmos clones aparecem com market_cap idêntico no mesmo segundo
+_market_cap_seen: dict[str, float] = {}  # f"{mc:.3f}" -> timestamp
 
 # Instâncias globais
 pump_scanner: PumpPortalScanner | None = None
@@ -71,10 +73,24 @@ async def lifespan(app: FastAPI):
         if market_cap > 0 and market_cap < min_mc:
             return
 
-        # Anti-clone: ignorar tokens com mesmo symbol já em análise (evita spam AGENC x50)
         symbol = (token_data.get("symbol") or "?").strip().upper()
+        now = time.time()
+
+        # Anti-clone por marketCapSol: tokens "irmãos" têm market_cap idêntico no mesmo segundo
+        if market_cap > 0:
+            mc_key = f"{market_cap:.3f}"
+            if mc_key in _market_cap_seen and (now - _market_cap_seen[mc_key]) < 10:
+                logger.debug(f"⏭️ Ignorando clone por marketCapSol idêntico: {symbol} mc={market_cap:.3f} SOL")
+                return
+            _market_cap_seen[mc_key] = now
+            if len(_market_cap_seen) > 1000:
+                cutoff = now - 60
+                for k in list(_market_cap_seen.keys()):
+                    if _market_cap_seen[k] < cutoff:
+                        del _market_cap_seen[k]
+
+        # Anti-clone: ignorar tokens com mesmo symbol já em análise (evita spam AGENC x50)
         if symbol and symbol != "?":
-            now = time.time()
             window = settings.ANTI_CLONE_SYMBOL_SECONDS
             if symbol in _symbol_analyzing and (now - _symbol_analyzing[symbol]) < window:
                 logger.debug(f"⏭️ Ignorando clone {symbol} (já em análise há {int(now - _symbol_analyzing[symbol])}s)")

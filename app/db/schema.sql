@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS positions (
     side TEXT NOT NULL DEFAULT 'BUY',
     opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     current_price DOUBLE PRECISION NOT NULL DEFAULT 0,
-    amount_raw BIGINT
+    amount_raw BIGINT,
+    buy_amount_sol DOUBLE PRECISION NOT NULL DEFAULT 0
 );
 
 -- Histórico de posições fechadas (PnL, motivo, auditoria)

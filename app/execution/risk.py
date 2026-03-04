@@ -122,7 +122,7 @@ class MemeRiskManager:
         # Persistência em positions.json (sobrevive reinício)
         try:
             from app.execution.positions_persistence import add_position
-            add_position(token, entry_price, quantity, symbol or token[:8], amount_raw=None)
+            add_position(token, entry_price, quantity, symbol or token[:8], amount_raw=None, buy_amount_sol=buy_amount_sol)
         except Exception as e:
             logger.warning(f"Erro ao salvar posição em positions.json: {e}")
 
@@ -179,6 +179,9 @@ class MemeRiskManager:
                 logger.debug(f"Preço SOL fallback: {e}")
 
             buy_amount_usd = buy_amount_sol * sol_price_usd
+            # TP1 fecha apenas 50% — base de cálculo do PnL deve ser metade da posição
+            if "50" in str(quantity):
+                buy_amount_usd *= 0.5
             pnl = (pnl_percent / 100) * buy_amount_usd
         else:
             pnl = 0.0

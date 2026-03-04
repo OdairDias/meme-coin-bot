@@ -87,12 +87,19 @@ class PositionManager:
                     fetched_price = float(fetched_info.get("price_usd", 0)) if fetched_info else 0.0
                     if fetched_price > 0:
                         actual_entry = fetched_price
-                        diff_pct = abs(actual_entry - signal_entry) / max(signal_entry, 1e-18) * 100
-                        if diff_pct > 10:
+                        diff_pct = (actual_entry - signal_entry) / max(signal_entry, 1e-18) * 100
+                        if abs(diff_pct) <= 1.0:
+                            logger.warning(
+                                f"⚠️ Entry pós-compra igual ao sinal (possível cache DexScreener): "
+                                f"${actual_entry:.8f} ≈ sinal=${signal_entry:.8f} — PnL pode estar inflado"
+                            )
+                        elif diff_pct > 10:
                             logger.info(
                                 f"Entry real (pós-compra): ${actual_entry:.8f} vs sinal=${signal_entry:.8f} "
                                 f"(token subiu {diff_pct:.0f}% durante delay de OHLCV)"
                             )
+                        else:
+                            logger.info(f"Entry confirmado pós-compra: ${actual_entry:.8f} (sinal=${signal_entry:.8f})")
                 except Exception as e:
                     logger.debug(f"Fetch entry pós-compra falhou: {e}")
 
@@ -134,7 +141,7 @@ class PositionManager:
             logger.error(f"Erro ao abrir posição: {e}", exc_info=True)
             return False
 
-    async def close_position(self, token: str, reason: str = "MANUAL"):
+    async def close_position(self, token: str, reason: str = "MANUAL", slippage: float = 10.0):
         """Fecha posição existente."""
         if token not in self.risk_manager.open_positions:
             logger.warning(f"Posição não encontrada: {token}")
@@ -158,7 +165,7 @@ class PositionManager:
                     token_address=token,
                     amount=amount_to_sell,
                     denominated_in_sol=False,
-                    slippage=10.0,
+                    slippage=slippage,
                 )
             except ValueError as e:
                 if str(e) == "ZERO_BALANCE":
@@ -181,7 +188,11 @@ class PositionManager:
                     pnl_percent = ((current_price - entry) / entry * 100) if entry > 0 else 0
                 else:
                     pnl_percent = ((entry - current_price) / entry * 100) if entry > 0 else 0
-                
+
+                # Desconto do slippage pago na saída (reduz PnL exibido para refletir valor real recebido)
+                slippage_paid = getattr(settings, 'DEFAULT_SLIPPAGE', 15.0)
+                pnl_percent_net = pnl_percent - slippage_paid
+
                 buy_amount_sol = pos.get("buy_amount_sol", 0)
                 sol_price_usd = 100.0
                 try:
@@ -191,15 +202,20 @@ class PositionManager:
                         sol_price_usd = fetched
                 except Exception:
                     pass
-                
+
                 buy_amount_usd = buy_amount_sol * sol_price_usd
                 if "50" in quantity:
                     buy_amount_usd = buy_amount_usd * 0.5
-                
+
                 if buy_amount_usd > 0:
-                    pnl = (pnl_percent / 100) * buy_amount_usd
+                    pnl = (pnl_percent_net / 100) * buy_amount_usd
                 else:
                     pnl = 0.0
+
+                logger.info(
+                    f"PnL bruto={pnl_percent:.1f}% | slippage_saída=-{slippage_paid:.0f}% | PnL líquido={pnl_percent_net:.1f}%"
+                )
+                pnl_percent = pnl_percent_net
             elif isinstance(quantity, (int, float)) and quantity > 0:
                 if side == "BUY":
                     pnl = (current_price - entry) * quantity
@@ -260,7 +276,10 @@ class PositionManager:
                 logger.error(f"Falha ao vender 50% de {token} (tentativa {attempts}/{_MAX_PARTIAL_ATTEMPTS})")
                 return False
 
-            pnl_percent = ((current_price - entry) / entry * 100) if (side == "BUY" and entry > 0) else 0
+            pnl_percent_gross = ((current_price - entry) / entry * 100) if (side == "BUY" and entry > 0) else 0
+            # Desconto do slippage pago na saída parcial
+            slippage_paid = getattr(settings, 'DEFAULT_SLIPPAGE', 15.0)
+            pnl_percent = pnl_percent_gross - slippage_paid
             buy_amount_sol = pos.get("buy_amount_sol", 0)
             sol_price_usd = 100.0
             try:
@@ -270,12 +289,15 @@ class PositionManager:
                     sol_price_usd = fetched
             except Exception:
                 pass
-            
+
             if buy_amount_sol > 0:
                 buy_amount_usd = buy_amount_sol * sol_price_usd
                 pnl_usd = (pnl_percent / 100) * (buy_amount_usd * 0.5)  # 50% da posição
             else:
                 pnl_usd = 0.0
+            logger.info(
+                f"PnL bruto TP1={pnl_percent_gross:.1f}% | slippage_saída=-{slippage_paid:.0f}% | PnL líquido={pnl_percent:.1f}%"
+            )
 
             self.risk_manager.open_positions[token]["quantity"] = "50%"
             try:
@@ -321,8 +343,9 @@ class PositionManager:
 
     async def _monitor_loop(self):
         """Loop que monitora preços (DexScreener primário, Jupiter fallback) e verifica SL/TP/timeout."""
-        interval = max(5, settings.MONITOR_PRICE_INTERVAL_SECONDS)
+        interval = max(3, settings.MONITOR_PRICE_INTERVAL_SECONDS)
         logger.info("Iniciando monitoramento de posições... (intervalo %ds)", interval)
+        emergency_threshold = getattr(settings, "EMERGENCY_SELL_THRESHOLD", 15.0)
         while self.running:
             try:
                 await asyncio.sleep(interval)
@@ -337,6 +360,19 @@ class PositionManager:
                                 self.risk_manager.open_positions[token]["current_price"] = current_price
                         except Exception as e:
                             logger.debug(f"Preço {token}: {e}")
+
+                    entry = pos["entry_price"]
+                    pnl_now = ((current_price - entry) / entry * 100) if entry > 0 else 0
+
+                    # Emergency sell: queda muito acima do SL em um único tick (crash rápido)
+                    emergency_trigger = -(settings.STOP_LOSS_PERCENT + emergency_threshold)
+                    if pnl_now <= emergency_trigger:
+                        logger.warning(
+                            f"🚨 EMERGENCY SELL {token[:8]}: pnl={pnl_now:.1f}% "
+                            f"(limite emergency={emergency_trigger:.0f}%) — slippage 50%"
+                        )
+                        await self.close_position(token, reason="STOP_LOSS_EMERGENCY", slippage=50.0)
+                        continue
 
                     exit_reason = self.risk_manager.check_exit_conditions(token, current_price)
                     if exit_reason:
