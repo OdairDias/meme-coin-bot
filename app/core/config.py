@@ -86,6 +86,19 @@ class Settings(BaseSettings):
     # Ao iniciar: vender tokens na carteira que não estão em positions.json (resíduos)
     AUTO_CLEANUP_ON_STARTUP: bool = Field(default=False, env="AUTO_CLEANUP_ON_STARTUP")
 
+    # Fase 1 — CandleBuilder (substitui sleep fixo + Bitquery para construir OHLCV em tempo real)
+    USE_REALTIME_CANDLES: bool = Field(default=False, env="USE_REALTIME_CANDLES")
+    CANDLE_TIMEFRAME_SECONDS: int = Field(default=15, env="CANDLE_TIMEFRAME_SECONDS")
+    CANDLE_BUILD_TIMEOUT_SECONDS: int = Field(default=90, env="CANDLE_BUILD_TIMEOUT_SECONDS")
+
+    # Fase 1 — RugCheck (filtro de risco antes do OHLCV; free tier)
+    RUGCHECK_ENABLED: bool = Field(default=False, env="RUGCHECK_ENABLED")
+    RUGCHECK_MIN_SCORE: int = Field(default=500, env="RUGCHECK_MIN_SCORE")
+
+    # Fase 1 — Heartbeat e alerta de inatividade via Telegram
+    NO_TOKEN_ALERT_SECONDS: int = Field(default=300, env="NO_TOKEN_ALERT_SECONDS")
+    HEARTBEAT_INTERVAL_MINUTES: int = Field(default=30, env="HEARTBEAT_INTERVAL_MINUTES")
+
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")
 

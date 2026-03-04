@@ -1,6 +1,7 @@
 """
 Estratégia principal de scalper para memecoins
-OHLCV: Bitquery (primário se BITQUERY_API_KEY) ou Birdeye (fallback). Preço SOL: Jupiter. Volume/liquidez: DexScreener.
+OHLCV: CandleBuilder (tempo real, Fase 1) > Bitquery (primário) > Birdeye (fallback).
+Preço SOL: Jupiter. Volume/liquidez: DexScreener. Filtro de risco: RugCheck (Fase 1).
 """
 import asyncio
 import logging
@@ -34,8 +35,16 @@ class MemeScalperStrategy:
         """
         return []
 
-    async def generate_signals(self, assets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Gera sinais a partir de assets pré-filtrados."""
+    async def generate_signals(
+        self,
+        assets: List[Dict[str, Any]],
+        prebuilt_ohlcv: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Gera sinais a partir de assets pré-filtrados.
+        prebuilt_ohlcv: candles já construídos pelo CandleBuilder (Fase 1).
+                        Quando fornecido, pula a chamada ao Bitquery/Birdeye.
+        """
         signals = []
 
         for asset in assets:
@@ -49,8 +58,25 @@ class MemeScalperStrategy:
                 logger.info(f"❌ {asset.get('symbol')} rejeitado (filtro): {reason}")
                 continue
 
-            # 2) Buscar OHLCV (1m): Bitquery se configurado, senão Birdeye
-            ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="1m", limit=10)
+            # 1b) RugCheck: verifica score de risco antes de consumir quota do Bitquery
+            if getattr(settings, "RUGCHECK_ENABLED", False):
+                try:
+                    from app.scanners.rugcheck import check_token
+                    rc_pass, rc_score, rc_reason = await check_token(token_address)
+                    if not rc_pass:
+                        logger.info(f"❌ {asset.get('symbol')} rejeitado (RugCheck): {rc_reason}")
+                        continue
+                    if rc_score > 0:
+                        logger.debug(f"RugCheck {asset.get('symbol')}: score={rc_score} OK")
+                except Exception as e:
+                    logger.debug(f"RugCheck erro (ignorado): {e}")
+
+            # 2) OHLCV: usar candles pré-construídos (CandleBuilder) ou buscar Bitquery/Birdeye
+            if prebuilt_ohlcv and prebuilt_ohlcv.get("ohlcv"):
+                ohlcv_data = prebuilt_ohlcv
+                logger.info(f"📊 Usando candles em tempo real para {asset.get('symbol')} ({len(prebuilt_ohlcv['ohlcv'])} candles)")
+            else:
+                ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="1m", limit=10)
             if not ohlcv_data or not ohlcv_data.get("ohlcv"):
                 logger.info(f"❌ {asset.get('symbol')} rejeitado: sem OHLCV")
                 continue

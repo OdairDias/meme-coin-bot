@@ -343,9 +343,12 @@ class PositionManager:
 
     async def _monitor_loop(self):
         """Loop que monitora preços (DexScreener primário, Jupiter fallback) e verifica SL/TP/timeout."""
+        import time as _time
         interval = max(3, settings.MONITOR_PRICE_INTERVAL_SECONDS)
         logger.info("Iniciando monitoramento de posições... (intervalo %ds)", interval)
         emergency_threshold = getattr(settings, "EMERGENCY_SELL_THRESHOLD", 15.0)
+        heartbeat_interval = getattr(settings, "HEARTBEAT_INTERVAL_MINUTES", 30) * 60
+        _last_heartbeat = _time.time()
         while self.running:
             try:
                 await asyncio.sleep(interval)
@@ -381,6 +384,21 @@ class PositionManager:
                             await self._partial_close_position(token)
                         else:
                             await self.close_position(token, reason=exit_reason)
+
+                # Heartbeat periódico — confirma que o loop está vivo
+                now_hb = _time.time()
+                if now_hb - _last_heartbeat >= heartbeat_interval:
+                    _last_heartbeat = now_hb
+                    n_pos = len(self.risk_manager.open_positions)
+                    logger.info(f"💓 Heartbeat: bot ativo — {n_pos} posição(ões) monitorada(s)")
+                    if self.alerter:
+                        try:
+                            await self.alerter.send_alert(
+                                "info",
+                                f"Heartbeat: bot ativo.\nPosições abertas: {n_pos}\nIntervalo monitor: {interval}s",
+                            )
+                        except Exception as e:
+                            logger.debug(f"Heartbeat Telegram: {e}")
 
             except asyncio.CancelledError:
                 break

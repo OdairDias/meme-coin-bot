@@ -12,6 +12,7 @@ from app.core.logger import setup_logger
 from app.scanners.pump_portal import PumpPortalScanner
 from app.scanners.birdeye import BirdeyeScanner
 from app.scanners.jupiter import PriceFetcherWithFallback
+from app.scanners.candle_builder import CandleBuilder
 from app.strategies.meme_scalper import MemeScalperStrategy
 from app.execution.executor import Executor
 from app.execution.risk import MemeRiskManager
@@ -30,6 +31,7 @@ _market_cap_seen: dict[str, float] = {}  # f"{mc:.3f}" -> timestamp
 # Instâncias globais
 pump_scanner: PumpPortalScanner | None = None
 birdeye: BirdeyeScanner | None = None
+candle_builder: CandleBuilder | None = None
 executor: Executor | None = None
 risk_manager: MemeRiskManager | None = None
 position_manager: PositionManager | None = None
@@ -39,7 +41,7 @@ alerter: TelegramAlerter | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle do FastAPI."""
-    global pump_scanner, birdeye, executor, risk_manager, position_manager, alerter
+    global pump_scanner, birdeye, candle_builder, executor, risk_manager, position_manager, alerter
 
     # Startup
     logger.info("🚀 Iniciando MemeCoin Bot...")
@@ -47,6 +49,7 @@ async def lifespan(app: FastAPI):
     # 1) Inicializar scanners
     pump_scanner = PumpPortalScanner()
     birdeye = BirdeyeScanner()
+    candle_builder = CandleBuilder()
 
     # 2) Postgres: criar tabelas ANTES de carregar posições (evita "column token does not exist")
     if getattr(settings, "DATABASE_URL", None) and str(settings.DATABASE_URL or "").strip():
@@ -104,18 +107,31 @@ async def lifespan(app: FastAPI):
                         del _symbol_analyzing[k]
 
         async def process_after_delay(rescan_count: int = 0):
-            """Aguarda delay para OHLCV (Bitquery ou Birdeye); re-scan até MAX_RESCAN_ATTEMPTS vezes."""
-            delay = settings.BIRDEYE_DELAY_SECONDS if rescan_count == 0 else settings.RESCAN_DELAY_SECONDS
-            if delay > 0:
-                symbol = token_data.get("symbol", "?")
-                if rescan_count == 0:
-                    logger.info(f"⏳ Aguardando {delay}s para {symbol} (OHLCV)")
+            """Constrói OHLCV (CandleBuilder em tempo real ou sleep+Bitquery) e gera sinais."""
+            _sym = token_data.get("symbol", "?")
+            _addr = token_data.get("address") or token_data.get("mint")
+            prebuilt: dict | None = None
+
+            # CandleBuilder substitui o sleep fixo quando USE_REALTIME_CANDLES=True
+            if getattr(settings, "USE_REALTIME_CANDLES", False) and rescan_count == 0 and _addr:
+                logger.info(f"📊 CandleBuilder ativo para {_sym} — coletando preços em tempo real...")
+                prebuilt = await candle_builder.build_candles(_addr)
+                if prebuilt:
+                    logger.info(f"✅ CandleBuilder: {len(prebuilt['ohlcv'])} candles para {_sym}")
                 else:
-                    logger.info(f"🔄 Re-analisando {symbol} ({rescan_count}/{settings.MAX_RESCAN_ATTEMPTS}) em {delay}s")
-                await asyncio.sleep(delay)
+                    logger.info(f"⚠️ CandleBuilder insuficiente para {_sym} — usando Bitquery/Birdeye como fallback")
+            else:
+                delay = settings.BIRDEYE_DELAY_SECONDS if rescan_count == 0 else settings.RESCAN_DELAY_SECONDS
+                if delay > 0:
+                    if rescan_count == 0:
+                        logger.info(f"⏳ Aguardando {delay}s para {_sym} (OHLCV)")
+                    else:
+                        logger.info(f"🔄 Re-analisando {_sym} ({rescan_count}/{settings.MAX_RESCAN_ATTEMPTS}) em {delay}s")
+                    await asyncio.sleep(delay)
+
             try:
                 assets = [token_data]
-                signals = await strategy.generate_signals(assets)
+                signals = await strategy.generate_signals(assets, prebuilt_ohlcv=prebuilt)
                 for signal in signals:
                     await position_manager.open_position(signal)
                 # Re-scan: se 0 sinais e ainda há tentativas, agendar retry
@@ -129,6 +145,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(process_after_delay(rescan_count=0))
 
     pump_scanner.register_callback(on_new_token)
+    pump_scanner.set_alerter(alerter)
 
     # 5) Inicializar PositionManager (preço SL/TP: DexScreener primário, Jupiter fallback; Telegram para alertas)
     price_fetcher = PriceFetcherWithFallback()

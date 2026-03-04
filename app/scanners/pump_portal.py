@@ -3,8 +3,9 @@ PumpPortal Scanner — WebSocket para detectar novos tokens em tempo real
 """
 import asyncio
 import json
+import time
 import logging
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, Optional
 from datetime import datetime, timezone
 import websockets
 
@@ -25,10 +26,16 @@ class PumpPortalScanner:
         self.running = False
         self.callbacks: list[Callable[[Dict[str, Any]], None]] = []
         self._last_mint_seen: Dict[str, float] = {}  # mint -> timestamp
+        self._last_token_received_at: float = time.time()
+        self._alerter: Optional[Any] = None  # TelegramAlerter injetado do main
 
     def register_callback(self, callback: Callable[[Dict[str, Any]], None]):
         """Registra callback para receber novos tokens."""
         self.callbacks.append(callback)
+
+    def set_alerter(self, alerter) -> None:
+        """Injeta TelegramAlerter para enviar alertas de inatividade."""
+        self._alerter = alerter
 
     async def connect(self):
         """Conecta ao WebSocket da PumpPortal."""
@@ -47,6 +54,23 @@ class PumpPortalScanner:
             logger.error(f"Erro ao conectar ao PumpPortal: {e}")
             raise
 
+    async def _no_token_alert_loop(self) -> None:
+        """Verifica periodicamente se nenhum token foi recebido e alerta via Telegram."""
+        check_interval = 60  # checar a cada 60s
+        while self.running:
+            await asyncio.sleep(check_interval)
+            threshold = getattr(settings, "NO_TOKEN_ALERT_SECONDS", 300)
+            elapsed = time.time() - self._last_token_received_at
+            if elapsed > threshold and self._alerter:
+                try:
+                    await self._alerter.send_alert(
+                        "warning",
+                        f"Nenhum token novo em {int(elapsed)}s (limite={threshold}s). "
+                        "Verificar conexão PumpPortal WebSocket.",
+                    )
+                except Exception as e:
+                    logger.debug(f"Heartbeat alert: {e}")
+
     async def start(self):
         """Inicia o loop de recebimento de mensagens."""
         if self.running:
@@ -55,6 +79,8 @@ class PumpPortalScanner:
 
         self.running = True
         logger.info("Iniciando PumpPortal Scanner...")
+        # Inicia task de alerta de inatividade em background
+        asyncio.create_task(self._no_token_alert_loop())
         _logged_structure = False
 
         # Reconectar automaticamente
@@ -175,6 +201,7 @@ class PumpPortalScanner:
 
     async def _handle_new_token(self, token_data: Dict[str, Any]):
         """Processa dados de um novo token e dispara callbacks."""
+        self._last_token_received_at = time.time()
         # Normalizar dados
         pool = (token_data.get("pool") or "").strip().lower()
         on_bonding_curve = pool != "raydium"
