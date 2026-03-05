@@ -558,6 +558,25 @@ class Executor:
                 )
                 if pp_ok:
                     return True
+
+                # Ambos falharam — mas a tx pode ter chegado on-chain com timeout.
+                # Verificamos o saldo real: se caiu ~50%, a venda foi executada on-chain.
+                is_timeout = (
+                    "timeout" in (err or "").lower()
+                    or "não encontrada" in (err or "").lower()
+                    or "timeout" in (pp_err or "").lower()
+                    or "não encontrada" in (pp_err or "").lower()
+                )
+                if is_timeout:
+                    await asyncio.sleep(5)
+                    new_balance = await self._get_real_token_balance_raw(token_address, use_fallback=False)
+                    if new_balance is not None and new_balance < int(balance_raw * 0.75):
+                        logger.info(
+                            f"✅ Venda parcial confirmada via saldo on-chain "
+                            f"({balance_raw} → {new_balance}): tx chegou apesar do timeout"
+                        )
+                        return True
+
                 logger.warning(f"Venda parcial falhou em ambos (Jupiter: {err}, PumpPortal: {pp_err})")
                 return False
 

@@ -23,18 +23,47 @@ def _get_url() -> str:
 
 def _get_connection():
     global _conn
+    import psycopg2
+    url = _get_url()
+    if not url:
+        return None
+
+    # Testa se a conexão existente ainda está viva (SSL pode cair silenciosamente)
+    if _conn is not None and not _conn.closed:
+        try:
+            with _conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            _conn.rollback()  # limpa qualquer transação aberta
+            return _conn
+        except Exception:
+            # Conexão quebrada (SSL SYSCALL EOF, etc.) — descartar e reconectar
+            try:
+                _conn.close()
+            except Exception:
+                pass
+            _conn = None
+
     if _conn is None or _conn.closed:
-        import psycopg2
-        url = _get_url()
-        if not url:
-            return None
         try:
             _conn = psycopg2.connect(url)
             _conn.autocommit = False
+            logger.debug("Postgres: nova conexão estabelecida")
         except Exception as e:
             logger.warning(f"Postgres connect: {e}")
+            _conn = None
             return None
     return _conn
+
+
+def _reset_connection():
+    """Descarta conexão atual para forçar reconexão na próxima chamada."""
+    global _conn
+    if _conn:
+        try:
+            _conn.close()
+        except Exception:
+            pass
+    _conn = None
 
 
 def init_schema() -> bool:
@@ -53,8 +82,7 @@ def init_schema() -> bool:
         return True
     except Exception as e:
         logger.warning(f"Init schema: {e}")
-        if conn:
-            conn.rollback()
+        _reset_connection()
         return False
 
 
@@ -91,8 +119,7 @@ def load_positions_from_db() -> Dict[str, Dict[str, Any]]:
         return result
     except Exception as e:
         logger.warning(f"load_positions_from_db: {e}")
-        if conn:
-            conn.rollback()
+        _reset_connection()
         return {}
 
 
@@ -129,8 +156,7 @@ def add_position_to_db(
         return True
     except Exception as e:
         logger.warning(f"add_position_to_db: {e}")
-        if conn:
-            conn.rollback()
+        _reset_connection()
         return False
 
 
@@ -147,8 +173,7 @@ def remove_position_from_db(token: str) -> bool:
         return True
     except Exception as e:
         logger.warning(f"remove_position_from_db: {e}")
-        if conn:
-            conn.rollback()
+        _reset_connection()
         return False
 
 
@@ -164,8 +189,7 @@ def update_amount_raw_in_db(token: str, amount_raw: int) -> bool:
         return True
     except Exception as e:
         logger.warning(f"update_amount_raw_in_db: {e}")
-        if conn:
-            conn.rollback()
+        _reset_connection()
         return False
 
 
@@ -182,8 +206,7 @@ def update_quantity_in_db(token: str, quantity: str | float) -> bool:
         return True
     except Exception as e:
         logger.warning(f"update_quantity_in_db: {e}")
-        if conn:
-            conn.rollback()
+        _reset_connection()
         return False
 
 
@@ -238,8 +261,7 @@ def insert_closed_position(
         return True
     except Exception as e:
         logger.warning(f"insert_closed_position: {e}")
-        if conn:
-            conn.rollback()
+        _reset_connection()
         return False
 
 

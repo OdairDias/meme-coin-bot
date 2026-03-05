@@ -28,7 +28,7 @@ async def get_price_usd(mint_address: str) -> Optional[float]:
             resp = await client.get(JUPITER_PRICE_URL, params={"ids": mint_address})
             if resp.status_code != 200:
                 if resp.status_code == 401:
-                    logger.warning("Jupiter 401 Unauthorized — fallback DexScreener será usado")
+                    logger.debug("Jupiter 401 Unauthorized — fallback DexScreener será usado")
                 else:
                     logger.debug(f"Jupiter price {resp.status_code} para {mint_address[:12]}...")
                 return None
