@@ -22,8 +22,9 @@ class Settings(BaseSettings):
     # Birdeye: ~300s (indexação lenta). Bitquery: ~60s (combined dataset é quase real-time).
     # Com Bitquery configurada, 300s desperdiça a janela de pump — reduza para 60.
     BIRDEYE_DELAY_SECONDS: int = Field(default=60, env="BIRDEYE_DELAY_SECONDS")
-    # Market cap mínimo (SOL) — só analisa tokens com market cap >= este valor (50 SOL)
-    MIN_MARKET_CAP_SOL: float = Field(default=50.0, env="MIN_MARKET_CAP_SOL")
+    # Market cap mínimo (SOL) — só analisa tokens com market cap >= este valor
+    # 30 SOL: captura tokens logo após criação (maioria nasce com ~28-35 SOL)
+    MIN_MARKET_CAP_SOL: float = Field(default=30.0, env="MIN_MARKET_CAP_SOL")
     # Re-scan: segundos entre tentativas — 120s economiza API e permite mais candles
     RESCAN_DELAY_SECONDS: int = Field(default=120, env="RESCAN_DELAY_SECONDS")
     # Anti-clone: ignorar tokens com mesmo symbol por N segundos (evita spam AGENC x50)
