@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     RESCAN_DELAY_SECONDS: int = Field(default=120, env="RESCAN_DELAY_SECONDS")
     # Anti-clone: ignorar tokens com mesmo symbol por N segundos (evita spam AGENC x50)
     ANTI_CLONE_SYMBOL_SECONDS: int = Field(default=600, env="ANTI_CLONE_SYMBOL_SECONDS")
-    # Mínimo de candles para análise (3 = explosão inicial, 4 = mais confirmação)
-    MIN_CANDLES: int = Field(default=3, env="MIN_CANDLES")
+    # Mínimo de candles para análise (4 = confirmação sólida com CandleBuilder 30s)
+    MIN_CANDLES: int = Field(default=4, env="MIN_CANDLES")
     # Máximo de re-scans por token (1 inicial + N rescans)
     MAX_RESCAN_ATTEMPTS: int = Field(default=4, env="MAX_RESCAN_ATTEMPTS")
     # Padrão: picos/valles mínimos (1 = mais permissivo, 2 = conservador)
@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     PATTERN_VOLUME_MIN_RATIO: float = Field(default=0.2, env="PATTERN_VOLUME_MIN_RATIO")
     # Se True, ignora checagem de volume (memecoins = volume caótico)
     PATTERN_SKIP_VOLUME_CHECK: bool = Field(default=True, env="PATTERN_SKIP_VOLUME_CHECK")
-    # Score mínimo para gerar sinal (40 = mais agressivo)
-    MIN_SCORE: float = Field(default=40.0, env="MIN_SCORE")
+    # Score mínimo para gerar sinal (50 = equilibrado; 40 = agressivo)
+    MIN_SCORE: float = Field(default=50.0, env="MIN_SCORE")
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str | None = Field(default=None, env="TELEGRAM_BOT_TOKEN")
@@ -86,10 +86,16 @@ class Settings(BaseSettings):
     # Ao iniciar: vender tokens na carteira que não estão em positions.json (resíduos)
     AUTO_CLEANUP_ON_STARTUP: bool = Field(default=False, env="AUTO_CLEANUP_ON_STARTUP")
 
-    # Fase 1 — CandleBuilder (substitui sleep fixo + Bitquery para construir OHLCV em tempo real)
-    USE_REALTIME_CANDLES: bool = Field(default=False, env="USE_REALTIME_CANDLES")
-    CANDLE_TIMEFRAME_SECONDS: int = Field(default=15, env="CANDLE_TIMEFRAME_SECONDS")
-    CANDLE_BUILD_TIMEOUT_SECONDS: int = Field(default=90, env="CANDLE_BUILD_TIMEOUT_SECONDS")
+    # CandleBuilder: constrói OHLCV localmente via polling DexScreener (substitui Bitquery/Birdeye)
+    # 30s candles × 180s timeout = 6 candles → escadinha completa, sem dependência de API externa
+    USE_REALTIME_CANDLES: bool = Field(default=True, env="USE_REALTIME_CANDLES")
+    CANDLE_TIMEFRAME_SECONDS: int = Field(default=30, env="CANDLE_TIMEFRAME_SECONDS")
+    CANDLE_BUILD_TIMEOUT_SECONDS: int = Field(default=180, env="CANDLE_BUILD_TIMEOUT_SECONDS")
+
+    # Anti-ruído: variação mínima (%) para considerar padrão válido
+    # Fast mode (3-5 candles): exige step_percent >= MIN_STEP_PERCENT
+    # Full mode (6+ candles): exige step height >= MIN_STEP_PERCENT * 0.5
+    MIN_STEP_PERCENT: float = Field(default=3.0, env="MIN_STEP_PERCENT")
 
     # Fase 1 — RugCheck (filtro de risco antes do OHLCV; free tier)
     RUGCHECK_ENABLED: bool = Field(default=False, env="RUGCHECK_ENABLED")

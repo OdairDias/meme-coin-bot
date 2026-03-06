@@ -40,6 +40,12 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int | None = N
         last_price = float(closes[-1])
         first_price = float(closes[0])
         step_percent = ((last_price - first_price) / first_price * 100) if first_price > 0 else 0
+
+        # Anti-ruído: rejeitar micro-bounces que não representam tendência real
+        min_step_pct = getattr(settings, "MIN_STEP_PERCENT", 3.0)
+        if step_percent < min_step_pct:
+            return False, {"reason": f"Variação insuficiente: {step_percent:.1f}% < {min_step_pct}% (3-5 candles)"}
+
         recent_volumes = [c.get("volume", 0) for c in ohlcv[-5:]]
         avg_volume = np.mean(recent_volumes) if recent_volumes else 0
         return True, {
@@ -93,6 +99,11 @@ def detect_stairs_pattern(ohlcv: List[Dict[str, Any]], min_steps: int | None = N
                 # Calcular "força" do padrão (height do último degrau)
                 step_height = last_peak - last_trough
                 step_percent = (step_height / last_trough) * 100 if last_trough > 0 else 0
+
+                # Anti-ruído: último degrau precisa ter variação mínima
+                min_step_pct = getattr(settings, "MIN_STEP_PERCENT", 3.0) * 0.5
+                if step_percent < min_step_pct:
+                    return False, {"reason": f"Step insuficiente: {step_percent:.1f}% < {min_step_pct:.1f}% (escadinha)"}
 
                 # Verificar volume (pode ser desativado — memecoins = volume caótico)
                 recent_volumes = [c.get("volume", 0) for c in ohlcv[-5:]]

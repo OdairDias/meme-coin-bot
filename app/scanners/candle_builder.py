@@ -2,8 +2,15 @@
 CandleBuilder — Constrói OHLCV em tempo real via polling de preço (DexScreener).
 Substitui o sleep(BIRDEYE_DELAY_SECONDS) + Bitquery/Birdeye como fonte de candles.
 
-Vantagem: começa a coletar preços imediatamente após o token aparecer, em vez de
-esperar um delay fixo antes de consultar uma API externa que pode não ter o token ainda.
+Configuração padrão (30s candles, 180s timeout):
+  - Poll DexScreener a cada 5s → 6 data points por candle de 30s
+  - 180s timeout → 6 candles → escadinha completa (6+ candles no pattern.py)
+  - Fallback para Bitquery/Birdeye se dados insuficientes
+
+Vantagem vs Bitquery 1m:
+  - Coleta desde t=0 (sem delay de indexação de 60-300s)
+  - 6 candles de 30s vs 3 candles de 1m no mesmo intervalo → mais resolução
+  - Sem dependência de API paga (Bitquery) → usa DexScreener (grátis)
 """
 import asyncio
 import time
@@ -14,7 +21,8 @@ from app.core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Intervalo entre polls de preço (s) — 5s evita rate limit no DexScreener
+# Intervalo entre polls de preço (s) — 5s evita rate limit no DexScreener.
+# Com candles de 30s: 30/5 = 6 data points por candle (resolução suficiente para OHLC).
 _POLL_INTERVAL_SECONDS = 5
 
 
