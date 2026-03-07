@@ -54,13 +54,25 @@ Todas as variáveis devem ser configuradas no painel do Railway → seu serviço
 
 | Variável | Valor sugerido | Descrição |
 |----------|----------------|-----------|
-| `USE_REALTIME_CANDLES` | `true` | Usar CandleBuilder em vez de sleep fixo + Bitquery para OHLCV |
-| `CANDLE_TIMEFRAME_SECONDS` | `30` | Tamanho de cada candle em segundos (30s cobre mais movimento que 15s) |
-| `CANDLE_BUILD_TIMEOUT_SECONDS` | `180` | Tempo total de coleta de preços (180s = 6 candles de 30s; mais confiável que 90s) |
+| `USE_REALTIME_CANDLES` | **`false`** | ⚠️ Ver nota abaixo. `false` = Bitquery 1-minuto (recomendado); `true` = CandleBuilder (polling DexScreener) |
+| `CANDLE_TIMEFRAME_SECONDS` | `60` | Tamanho de cada candle. **Não usar < 60s** — candles curtos capturam o pump inteiro como padrão |
+| `CANDLE_BUILD_TIMEOUT_SECONDS` | `300` | Tempo total de coleta. 300s = 5 candles de 60s (suficiente para ver tendência real) |
 | `RUGCHECK_ENABLED` | `true` | Verificar score de risco no RugCheck antes de cada análise |
 | `RUGCHECK_MIN_SCORE` | `500` | Score mínimo para aprovação (0–1000, maior = mais seguro) |
 | `NO_TOKEN_ALERT_SECONDS` | `300` | Enviar alerta Telegram se nenhum token chegar em X segundos |
 | `HEARTBEAT_INTERVAL_MINUTES` | `30` | Frequência do heartbeat "bot ativo" via Telegram |
+
+> **⚠️ CandleBuilder vs Bitquery — escolha consciente:**
+>
+> | | CandleBuilder (`true`) | Bitquery (`false`) |
+> |---|---|---|
+> | Velocidade | Imediato (coleta desde o 1º segundo) | Espera 60s para indexação |
+> | Volume | ❌ Sempre zero (DexScreener não dá volume por polling) | ✅ Volume real de cada candle |
+> | Risco principal | Captura o pump inteiro → entra no topo | Delay de 60s → pode perder início do pump |
+> | Candles | Preço DexScreener a cada 5s | Agregação real de trades Pump.fun |
+> | Recomendação | Usar com `CANDLE_TIMEFRAME_SECONDS=60` + `MAX_ENTRY_PUMP_PERCENT=50` | **Preferível para memecoins** |
+>
+> Candles de **30 segundos com CandleBuilder** mostraram resultados piores: em 3 minutos de coleta, o bot captura o pump inicial inteiro como "escadinha" e entra exatamente quando o movimento já ocorreu.
 
 ---
 
