@@ -140,6 +140,25 @@ class MemeScalperStrategy:
                 asset["price_usd"] = last_price_sol * sol_price
             # holders: manter do asset (PumpPortal) ou 0
 
+            # 4b) Filtro anti-entrada-no-topo (MAX_ENTRY_PUMP_PERCENT)
+            # Compara o preço atual (DexScreener) com o último preço do OHLCV analisado.
+            # Se o token já subiu mais que MAX_ENTRY_PUMP_PERCENT% desde que o OHLCV foi coletado
+            # (ocorre durante o delay Bitquery/Birdeye de 60-120s), a entrada seria no topo do pump.
+            # Não aplicado quando prebuilt_ohlcv (CandleBuilder): seu last_price já é quase real-time.
+            max_pump_pct = getattr(settings, "MAX_ENTRY_PUMP_PERCENT", 0.0)
+            if max_pump_pct > 0 and not prebuilt_ohlcv and last_price_sol > 0:
+                ohlcv_price_usd = last_price_sol * sol_price
+                current_price_usd = asset.get("price_usd") or 0
+                if ohlcv_price_usd > 0 and current_price_usd > 0:
+                    pump_since_ohlcv = (current_price_usd - ohlcv_price_usd) / ohlcv_price_usd * 100
+                    if pump_since_ohlcv > max_pump_pct:
+                        logger.info(
+                            f"❌ {asset.get('symbol')} rejeitado: preço subiu {pump_since_ohlcv:.0f}% "
+                            f"desde a análise OHLCV (dex=${current_price_usd:.8f} vs "
+                            f"ohlcv=${ohlcv_price_usd:.8f}) — entrada seria no topo"
+                        )
+                        continue
+
             # 5) Calcular score simples (pode ser melhorado depois)
             score = self._calculate_score(asset, pattern_meta)
 

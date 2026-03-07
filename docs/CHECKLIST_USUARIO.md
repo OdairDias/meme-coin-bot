@@ -92,16 +92,18 @@ Todas as variáveis devem ser configuradas no painel do Railway → seu serviço
 | Variável | Padrão código | Valor recomendado | Descrição |
 |----------|---------------|-------------------|-----------|
 | `DRY_RUN` | `true` | **`false`** para trades reais | Simulação: `true` não executa ordens. Confirme que está `false` em produção. |
-| `MIN_MARKET_CAP_SOL` | `50` | `50` | Market cap mínimo (SOL) para analisar um token |
-| `STOP_LOSS_PERCENT` | `30` | `30` | % de queda para disparar stop loss |
+| `MIN_MARKET_CAP_SOL` | `50` | **`50`** | Market cap mínimo (SOL). Abaixo de 50 SOL os tokens são instáveis demais. |
+| `STOP_LOSS_PERCENT` | `30` | **`20`** | ⚠️ 30% é muito largo para memecoins. Cada perda fica 50% maior. Recomendado: `20`. |
 | `TAKE_PROFIT_PERCENT1` | `50` | `50` | % de ganho para TP1 (fecha 50% da posição) |
 | `TAKE_PROFIT_BUFFER` | `0.8` | `0.8` | Redutor do threshold de TP1. Com 50% × 0.8 = **TP1 dispara a 40%**, não 50%. Defina `1.0` para desabilitar. |
 | `TAKE_PROFIT_PERCENT2` | `200` | `200` | % de ganho para TP2 (fecha os 50% restantes) |
 | `MAX_CONCURRENT_POSITIONS` | `3` | `3` | Máximo de posições abertas simultaneamente |
-| `MAX_HOLDING_MINUTES` | `30` | `30` | Tempo máximo de holding antes de fechar por timeout |
-| `USE_CONSERVATIVE_ENTRY` | `false` | **`false`** | ⚠️ Manter `false`. Valor `true` inflava o entry em 30%, atrasava o SL e causava perdas maiores (-53% vs -20% target). |
+| `MAX_HOLDING_MINUTES` | `30` | **`20`** | Reduzir para 20 min: tokens que não se movem em 20 min geralmente já perderam o momentum. |
+| `USE_CONSERVATIVE_ENTRY` | `false` | **`false`** | ⚠️ Manter `false`. Valor `true` inflava o entry em 30%, atrasava o SL e causava perdas maiores. |
+| `MIN_SCORE` | `40` | **`60`** | Elevar para 60: exige volume + liquidez + pattern mais fortes antes de entrar. |
+| `MAX_ENTRY_PUMP_PERCENT` | `0` | **`50`** | ✨ **Nova variável.** Rejeita entrada se o preço DexScreener já subiu >50% acima do OHLCV analisado — evita comprar no topo do pump. `0` = desabilitado. |
 | `DEFAULT_SLIPPAGE` | `15` | `15` | Slippage de compra %. Valor `30` (do .env.example antigo) dobrava o custo de entrada. |
-| `PRIORITY_FEE_LEVEL` | `veryHigh` | `veryHigh` | Nível de priority fee Helius. `high` era o valor antigo — `veryHigh` garante melhor inclusão em memecoins. |
+| `PRIORITY_FEE_LEVEL` | `veryHigh` | `veryHigh` | Nível de priority fee Helius. `veryHigh` garante melhor inclusão em memecoins. |
 | `MONITOR_PRICE_INTERVAL_SECONDS` | `3` | `3` | Frequência de verificação SL/TP em segundos |
 | `BITQUERY_API_KEY` | — | obrigatório | Chave API Bitquery para OHLCV (free tier funciona) |
 

@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     PATTERN_SKIP_VOLUME_CHECK: bool = Field(default=True, env="PATTERN_SKIP_VOLUME_CHECK")
     # Score mínimo para gerar sinal (40 = mais agressivo)
     MIN_SCORE: float = Field(default=40.0, env="MIN_SCORE")
+    # Filtro anti-entrada-no-topo: rejeita se preço DexScreener atual subiu mais que X% acima
+    # do último preço do OHLCV analisado (indica que o pump ocorreu durante o delay de indexação
+    # e o bot estaria comprando no topo). 0 = desabilitado; 50 = rejeita se subiu >50%.
+    # Só aplicado no modo Bitquery/Birdeye (não CandleBuilder, cujo last_price já é quase real-time).
+    MAX_ENTRY_PUMP_PERCENT: float = Field(default=0.0, env="MAX_ENTRY_PUMP_PERCENT")
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str | None = Field(default=None, env="TELEGRAM_BOT_TOKEN")
