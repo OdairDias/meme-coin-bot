@@ -11,7 +11,9 @@ Todas as variáveis devem ser configuradas no painel do Railway → seu serviço
 |----------|-----------|---------|
 | `WALLET_PRIVATE_KEY` | Chave privada da carteira Solana (base58). **Nunca compartilhe.** | `4Rk7...` |
 | `PUMP_PORTAL_API` | URL do endpoint trade-local do PumpPortal | `https://pumpportal.fun/api/trade-local` |
-| `SOLANA_RPC_URL` ou `HELIUS_RPC_URL` | RPC Solana. Helius recomendado para priority fee. | `https://mainnet.helius-rpc.com/?api-key=...` |
+| `HELIUS_RPC` | RPC Solana (URL completa). **Nome exato da variável** — `HELIUS_RPC_URL` não é lido pelo código. | `https://mainnet.helius-rpc.com/?api-key=...` |
+
+> ⚠️ Se você criou a variável como `HELIUS_RPC_URL` no Railway, o bot está usando o RPC público (`api.mainnet-beta.solana.com`) e ignorando o Helius. **Renomeie para `HELIUS_RPC`.**
 
 ---
 
@@ -53,8 +55,8 @@ Todas as variáveis devem ser configuradas no painel do Railway → seu serviço
 | Variável | Valor sugerido | Descrição |
 |----------|----------------|-----------|
 | `USE_REALTIME_CANDLES` | `true` | Usar CandleBuilder em vez de sleep fixo + Bitquery para OHLCV |
-| `CANDLE_TIMEFRAME_SECONDS` | `15` | Tamanho de cada candle em segundos |
-| `CANDLE_BUILD_TIMEOUT_SECONDS` | `90` | Tempo total de coleta de preços para montar os candles |
+| `CANDLE_TIMEFRAME_SECONDS` | `30` | Tamanho de cada candle em segundos (30s cobre mais movimento que 15s) |
+| `CANDLE_BUILD_TIMEOUT_SECONDS` | `180` | Tempo total de coleta de preços (180s = 6 candles de 30s; mais confiável que 90s) |
 | `RUGCHECK_ENABLED` | `true` | Verificar score de risco no RugCheck antes de cada análise |
 | `RUGCHECK_MIN_SCORE` | `500` | Score mínimo para aprovação (0–1000, maior = mais seguro) |
 | `NO_TOKEN_ALERT_SECONDS` | `300` | Enviar alerta Telegram se nenhum token chegar em X segundos |
@@ -85,19 +87,23 @@ Todas as variáveis devem ser configuradas no painel do Railway → seu serviço
 
 ---
 
-## Outras variáveis importantes (já existem no Railway)
+## Outras variáveis importantes (verificar no Railway)
 
-| Variável | Padrão código | Descrição |
-|----------|---------------|-----------|
-| `MIN_MARKET_CAP_SOL` | `50` | Market cap mínimo (SOL) para analisar um token |
-| `STOP_LOSS_PERCENT` | `20` | % de queda para disparar stop loss |
-| `TAKE_PROFIT_PERCENT1` | `50` | % de ganho para TP1 (fecha 50% da posição) |
-| `TAKE_PROFIT_PERCENT2` | `200` | % de ganho para TP2 (fecha os 50% restantes) |
-| `MAX_CONCURRENT_POSITIONS` | `3` | Máximo de posições abertas simultaneamente |
-| `MAX_HOLDING_MINUTES` | `30` | Tempo máximo de holding antes de fechar por timeout |
-| `USE_CONSERVATIVE_ENTRY` | `true` | Usar entry_price corrigido pelo slippage de compra |
-| `MONITOR_PRICE_INTERVAL_SECONDS` | `3` | Frequência de verificação SL/TP em segundos |
-| `BITQUERY_API_KEY` | — | Chave API Bitquery para OHLCV (free tier funciona) |
+| Variável | Padrão código | Valor recomendado | Descrição |
+|----------|---------------|-------------------|-----------|
+| `DRY_RUN` | `true` | **`false`** para trades reais | Simulação: `true` não executa ordens. Confirme que está `false` em produção. |
+| `MIN_MARKET_CAP_SOL` | `50` | `50` | Market cap mínimo (SOL) para analisar um token |
+| `STOP_LOSS_PERCENT` | `30` | `30` | % de queda para disparar stop loss |
+| `TAKE_PROFIT_PERCENT1` | `50` | `50` | % de ganho para TP1 (fecha 50% da posição) |
+| `TAKE_PROFIT_BUFFER` | `0.8` | `0.8` | Redutor do threshold de TP1. Com 50% × 0.8 = **TP1 dispara a 40%**, não 50%. Defina `1.0` para desabilitar. |
+| `TAKE_PROFIT_PERCENT2` | `200` | `200` | % de ganho para TP2 (fecha os 50% restantes) |
+| `MAX_CONCURRENT_POSITIONS` | `3` | `3` | Máximo de posições abertas simultaneamente |
+| `MAX_HOLDING_MINUTES` | `30` | `30` | Tempo máximo de holding antes de fechar por timeout |
+| `USE_CONSERVATIVE_ENTRY` | `false` | **`false`** | ⚠️ Manter `false`. Valor `true` inflava o entry em 30%, atrasava o SL e causava perdas maiores (-53% vs -20% target). |
+| `DEFAULT_SLIPPAGE` | `15` | `15` | Slippage de compra %. Valor `30` (do .env.example antigo) dobrava o custo de entrada. |
+| `PRIORITY_FEE_LEVEL` | `veryHigh` | `veryHigh` | Nível de priority fee Helius. `high` era o valor antigo — `veryHigh` garante melhor inclusão em memecoins. |
+| `MONITOR_PRICE_INTERVAL_SECONDS` | `3` | `3` | Frequência de verificação SL/TP em segundos |
+| `BITQUERY_API_KEY` | — | obrigatório | Chave API Bitquery para OHLCV (free tier funciona) |
 
 ---
 
