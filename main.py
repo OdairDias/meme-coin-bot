@@ -175,7 +175,7 @@ async def lifespan(app: FastAPI):
         if market_cap > 0 and market_cap < min_mc:
             return
 
-        symbol = (token_data.get("symbol") or "?").strip().upper()
+        symbol = ((token_data.get("symbol") or "").strip().upper()) or "?"
         now = time.time()
 
         # Anti-clone por marketCapSol: tokens "irmãos" têm market_cap idêntico no mesmo segundo
