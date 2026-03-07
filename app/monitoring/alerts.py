@@ -105,7 +105,7 @@ class TelegramAlerter:
             lines = ["<b>📊 STATUS DO BOT</b>"]
             if self._risk_manager:
                 n_pos = len(getattr(self._risk_manager, "open_positions", {}))
-                daily = getattr(self._risk_manager, "_daily_loss", 0)
+                daily = getattr(self._risk_manager, "daily_loss", 0)
                 lines.append(f"Posições abertas: <b>{n_pos}</b>")
                 lines.append(f"Daily PnL: <b>{daily:+.4f} USD</b>")
             now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")

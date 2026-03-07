@@ -144,8 +144,20 @@ class MemeRiskManager:
         qty_log = f"{quantity:.6f}" if isinstance(quantity, (int, float)) else str(quantity)
         logger.info(f"📈 Posição aberta: {token} qty={qty_log} @ ${entry_price:.6f}")
 
-    async def record_position_close(self, token: str, exit_price: float, reason: str):
-        """Registra fechamento de posição e calcula PnL."""
+    async def record_position_close(
+        self,
+        token: str,
+        exit_price: float,
+        reason: str,
+        pnl_usd_override: float | None = None,
+        pnl_percent_override: float | None = None,
+    ):
+        """
+        Registra fechamento de posição e calcula PnL.
+        pnl_usd_override / pnl_percent_override: quando fornecidos pelo PositionManager,
+        usados diretamente (já incluem desconto de slippage), evitando recalcular sem
+        o desconto e gerar inconsistência entre Telegram e Postgres.
+        """
         if token not in self.open_positions:
             logger.warning(f"Tentativa de fechar posição inexistente: {token}")
             return
@@ -156,8 +168,11 @@ class MemeRiskManager:
         side = pos["side"]
         buy_amount_sol = pos.get("buy_amount_sol", 0)
 
-        # Calcular PnL - usar buy_amount_sol quando quantity é string
-        if isinstance(quantity, (int, float)) and quantity > 0:
+        if pnl_usd_override is not None and pnl_percent_override is not None:
+            pnl = pnl_usd_override
+            pnl_percent = pnl_percent_override
+        elif isinstance(quantity, (int, float)) and quantity > 0:
+            # Calcular PnL - usar buy_amount_sol quando quantity é string
             if side == "BUY":
                 pnl = (exit_price - entry) * quantity
                 pnl_percent = ((exit_price - entry) / entry) * 100 if entry > 0 else 0

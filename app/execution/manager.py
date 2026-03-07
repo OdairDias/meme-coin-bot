@@ -170,13 +170,25 @@ class PositionManager:
                 )
             except ValueError as e:
                 if str(e) == "ZERO_BALANCE":
-                    logger.error(f"ERRO CRÍTICO: Saldo zero para {token}, tokens NÃO foram vendidos! Posição mantida.")
+                    # Saldo confirmado zero on-chain: tokens ausentes na carteira.
+                    # Fechar posição localmente para evitar loop infinito no monitor
+                    # (monitor chamaria close_position novamente a cada 3s indefinidamente).
+                    logger.warning(
+                        f"⚠️ Saldo zero on-chain para {symbol} — fechando posição localmente sem tx. "
+                        f"Motivo: {reason}"
+                    )
+                    await self.risk_manager.record_position_close(
+                        token, pos.get("current_price", pos["entry_price"]), "ZERO_BALANCE"
+                    )
                     if self.alerter:
                         try:
-                            await self.alerter.send_alert("critical", f"FALHA AO VENDER {symbol}: saldo zero. Posição mantida!")
+                            await self.alerter.send_alert(
+                                "warning",
+                                f"⚠️ {symbol}: saldo zero on-chain. Posição fechada localmente (motivo original: {reason}).",
+                            )
                         except Exception:
                             pass
-                    return False
+                    return True
                 else:
                     raise
             if not success:
@@ -228,8 +240,13 @@ class PositionManager:
                 pnl = 0.0
                 pnl_percent = 0.0
 
-            # Registrar fechamento
-            await self.risk_manager.record_position_close(token, current_price, reason)
+            # Registrar fechamento passando PnL já calculado (com desconto de slippage)
+            # para garantir consistência entre Telegram e Postgres
+            await self.risk_manager.record_position_close(
+                token, current_price, reason,
+                pnl_usd_override=pnl,
+                pnl_percent_override=pnl_percent,
+            )
             logger.info(f"✅ Posição fechada: {token} motivo={reason}")
 
             if self.alerter:

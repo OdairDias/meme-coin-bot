@@ -134,6 +134,9 @@ class PumpPortalScanner:
                     continue
 
                 # Formato 3: objeto direto sem "method" (mint, symbol, marketCapSol, etc.)
+                # Variante 3a: keys padrão (bondingCurveKey, vTokensInBondingCurve, is_mayhem_mode, ...)
+                # Variante 3b: keys alternativas (tokensInPool, newTokenBalance, sem bondingCurveKey)
+                # Ambas são normalizadas por _normalize_raw_token — lê apenas campos comuns.
                 if not method and isinstance(data, dict) and data.get("mint"):
                     mint = data.get("mint", "")
                     now = asyncio.get_event_loop().time()
