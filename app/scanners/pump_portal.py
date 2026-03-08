@@ -55,11 +55,14 @@ class PumpPortalScanner:
             raise
 
     async def _no_token_alert_loop(self) -> None:
-        """Verifica periodicamente se nenhum token foi recebido e alerta via Telegram."""
+        """Verifica periodicamente se nenhum token foi recebido e alerta via Telegram.
+        NO_TOKEN_ALERT_SECONDS=0 desabilita completamente o alerta."""
         check_interval = 60  # checar a cada 60s
         while self.running:
             await asyncio.sleep(check_interval)
             threshold = getattr(settings, "NO_TOKEN_ALERT_SECONDS", 300)
+            if threshold <= 0:
+                continue
             elapsed = time.time() - self._last_token_received_at
             if elapsed > threshold and self._alerter:
                 try:

@@ -403,9 +403,9 @@ class PositionManager:
                         else:
                             await self.close_position(token, reason=exit_reason)
 
-                # Heartbeat periódico — confirma que o loop está vivo
+                # Heartbeat periódico — confirma que o loop está vivo (0 = desabilitado)
                 now_hb = _time.time()
-                if now_hb - _last_heartbeat >= heartbeat_interval:
+                if heartbeat_interval > 0 and now_hb - _last_heartbeat >= heartbeat_interval:
                     _last_heartbeat = now_hb
                     n_pos = len(self.risk_manager.open_positions)
                     logger.info(f"💓 Heartbeat: bot ativo — {n_pos} posição(ões) monitorada(s)")
