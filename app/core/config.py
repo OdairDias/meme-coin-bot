@@ -105,10 +105,15 @@ class Settings(BaseSettings):
     HEARTBEAT_INTERVAL_MINUTES: int = Field(default=30, env="HEARTBEAT_INTERVAL_MINUTES")
 
     # Fase 3 — PriorityQueue para processamento de tokens
-    # Número de workers simultâneos puxando tokens da fila
-    TOKEN_QUEUE_WORKERS: int = Field(default=3, env="TOKEN_QUEUE_WORKERS")
+    # Número de workers simultâneos puxando tokens da fila.
+    # Com CandleBuilder (300s por token), aumentar para 5+ para evitar acúmulo na fila.
+    TOKEN_QUEUE_WORKERS: int = Field(default=5, env="TOKEN_QUEUE_WORKERS")
     # Tempo máximo (segundos) que um token pode aguardar na fila antes de ser descartado
     TOKEN_QUEUE_MAX_AGE_SECONDS: int = Field(default=600, env="TOKEN_QUEUE_MAX_AGE_SECONDS")
+    # Idade máxima (segundos) que um token pode ter esperado na fila para ainda usar
+    # CandleBuilder. Tokens que esperaram mais que isso já têm dados na Bitquery/Birdeye;
+    # usar Bitquery direto é mais eficiente do que rodar CandleBuilder sobre dado antigo.
+    CANDLE_BUILDER_MAX_QUEUE_AGE_SECONDS: int = Field(default=120, env="CANDLE_BUILDER_MAX_QUEUE_AGE_SECONDS")
 
     # Fase 2 — Jito Bundles (proteção MEV; desabilitado por padrão)
     USE_JITO: bool = Field(default=False, env="USE_JITO")

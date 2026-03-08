@@ -44,10 +44,14 @@ strategy: MemeScalperStrategy | None = None
 _token_queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=500)
 
 
-async def _process_token(token_data: dict, rescan_count: int = 0) -> None:
+async def _process_token(token_data: dict, rescan_count: int = 0, queued_at: float = 0) -> None:
     """
     Constrói OHLCV (CandleBuilder ou sleep+Bitquery) e gera sinais de compra.
     Chamado pelos workers da fila de prioridade (Fase 3).
+
+    queued_at: timestamp de quando o token entrou na fila (time.time()).
+    Usado para decidir se CandleBuilder ainda faz sentido: tokens que esperaram muito
+    na fila já têm dados na Bitquery — usar Bitquery direto é mais eficiente.
     """
     if strategy is None or position_manager is None:
         return
@@ -71,7 +75,20 @@ async def _process_token(token_data: dict, rescan_count: int = 0) -> None:
         except Exception as e:
             logger.debug(f"RugCheck pré-check erro (ignorado): {e}")
 
-    if getattr(settings, "USE_REALTIME_CANDLES", False) and rescan_count == 0 and _addr:
+    # Decidir CandleBuilder vs Bitquery:
+    # CandleBuilder só vale para tokens frescos. Se o token esperou muito na fila,
+    # o Bitquery já terá dados suficientes e o CandleBuilder coletaria dados de um
+    # token que pode ter passado seu pico.
+    queue_age = time.time() - queued_at if queued_at > 0 else 0
+    max_queue_age_for_candle = getattr(settings, "CANDLE_BUILDER_MAX_QUEUE_AGE_SECONDS", 120)
+    _use_candle_builder = (
+        getattr(settings, "USE_REALTIME_CANDLES", False)
+        and rescan_count == 0
+        and _addr
+        and queue_age < max_queue_age_for_candle
+    )
+
+    if _use_candle_builder:
         logger.info(f"📊 CandleBuilder ativo para {_sym} — coletando preços em tempo real...")
         prebuilt = await candle_builder.build_candles(_addr)
         if prebuilt:
@@ -79,6 +96,11 @@ async def _process_token(token_data: dict, rescan_count: int = 0) -> None:
         else:
             logger.info(f"⚠️ CandleBuilder insuficiente para {_sym} — usando Bitquery/Birdeye como fallback")
     else:
+        if getattr(settings, "USE_REALTIME_CANDLES", False) and rescan_count == 0 and queue_age >= max_queue_age_for_candle:
+            logger.debug(
+                f"⏩ {_sym}: aguardou {queue_age:.0f}s na fila (max={max_queue_age_for_candle}s) "
+                f"— CandleBuilder pulado, Bitquery já tem dados"
+            )
         delay = settings.BIRDEYE_DELAY_SECONDS if rescan_count == 0 else settings.RESCAN_DELAY_SECONDS
         if delay > 0:
             if rescan_count == 0:
@@ -127,7 +149,7 @@ async def _token_queue_worker() -> None:
                 logger.debug(f"⏭️ Token {sym} expirou na fila ({age:.0f}s > {max_age}s) — descartado")
                 _token_queue.task_done()
                 continue
-            await _process_token(token_data, rescan_count)
+            await _process_token(token_data, rescan_count, queued_at=queued_at)
             _token_queue.task_done()
         except asyncio.TimeoutError:
             continue
@@ -209,9 +231,15 @@ async def lifespan(app: FastAPI):
         mc = market_cap or 0
         try:
             _token_queue.put_nowait((-mc, now, token_data, 0))
-            logger.debug(
-                f"📥 {symbol} adicionado à fila (mc={mc:.0f} SOL, fila={_token_queue.qsize()})"
-            )
+            qsize = _token_queue.qsize()
+            logger.debug(f"📥 {symbol} adicionado à fila (mc={mc:.0f} SOL, fila={qsize})")
+            # Alerta quando fila está > 80% cheia — sugere aumentar TOKEN_QUEUE_WORKERS
+            if qsize > _token_queue.maxsize * 0.8:
+                logger.warning(
+                    f"⚠️ Fila de tokens {qsize}/{_token_queue.maxsize} — "
+                    f"workers sobrecarregados. Considere aumentar TOKEN_QUEUE_WORKERS "
+                    f"(atual={getattr(settings, 'TOKEN_QUEUE_WORKERS', 5)})"
+                )
         except asyncio.QueueFull:
             logger.warning(f"⚠️ Fila de tokens cheia ({_token_queue.maxsize}) — {symbol} descartado")
 
