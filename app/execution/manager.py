@@ -324,6 +324,15 @@ class PositionManager:
             except Exception as e:
                 logger.warning(f"Erro ao persistir quantity 50%: {e}")
 
+            # Break-even floor: após TP1, eleva SL para entry_price.
+            # Garante que o restante 50% não reverta o ganho realizado no TP1.
+            entry_price = pos["entry_price"]
+            self.risk_manager.open_positions[token]["sl_floor_price"] = entry_price
+            logger.info(
+                f"🔐 Break-even floor ativo para {symbol}: SL elevado para "
+                f"${entry_price:.8f} (trade não pode mais fechar no prejuízo)"
+            )
+
             try:
                 from app.execution.positions_persistence import record_closed_position
                 record_closed_position(

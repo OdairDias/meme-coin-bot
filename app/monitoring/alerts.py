@@ -158,9 +158,10 @@ class TelegramAlerter:
         ]
 
         reason_emoji = {
-            "STOP_LOSS": "❌", "TAKE_PROFIT_PARTIAL": "🔄",
-            "TAKE_PROFIT_FULL": "✅", "MAX_HOLDING_TIME": "⏰",
-            "EMERGENCY_SELL": "🚨", "ZERO_BALANCE": "⚪",
+            "STOP_LOSS": "❌", "STOP_LOSS_BREAKEVEN": "🔐",
+            "TAKE_PROFIT_PARTIAL": "🔄", "TAKE_PROFIT_FULL": "✅",
+            "MAX_HOLDING_TIME": "⏰", "EMERGENCY_SELL": "🚨",
+            "ZERO_BALANCE": "⚪", "STOP_LOSS_EMERGENCY": "🚨",
         }
         for reason, s in sorted(reasons.items(), key=lambda x: -x[1]["pnl"]):
             emoji = reason_emoji.get(reason, "📌")

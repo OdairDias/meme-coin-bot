@@ -265,7 +265,19 @@ class MemeRiskManager:
         else:
             pnl_percent = ((entry - current_price) / entry) * 100 if entry > 0 else 0
 
-        # Stop loss
+        # Break-even floor após TP1: SL elevado para entry_price.
+        # Impede que a posição que realizou TP1 (+80%) reverta para prejuízo.
+        # Ex.: ChatClaw → TP1 a +84% → depois despencou -31% → net negativo.
+        # Com o floor: se cair de volta ao entry, fecha no zero (não no -31%).
+        sl_floor_price = pos.get("sl_floor_price", 0)
+        if sl_floor_price > 0 and side == "BUY" and current_price <= sl_floor_price:
+            logger.info(
+                f"🔐 Break-even SL: {token[:8]} current={current_price:.8f} "
+                f"<= floor={sl_floor_price:.8f} — TP1 já realizado, protegendo o trade"
+            )
+            return "STOP_LOSS_BREAKEVEN"
+
+        # Stop loss normal
         if pnl_percent <= -settings.STOP_LOSS_PERCENT:
             logger.info(f"🔴 SL: {token[:8]} entry={entry:.8f} current={current_price:.8f} pnl={pnl_percent:.1f}%")
             return "STOP_LOSS"
