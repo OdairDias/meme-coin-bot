@@ -144,10 +144,14 @@ class BirdeyeScanner:
 
     async def get_ohlcv(self, token_address: str, interval: str = "5m", limit: int = 50) -> Optional[Dict[str, Any]]:
         """OHLCV: Bitquery (primário se configurado) ou Birdeye (fallback)."""
+        bitquery_result: Optional[Dict[str, Any]] | None = None
         if self._bitquery:
-            return await self._bitquery.get_ohlcv(token_address, interval=interval, limit=limit)
+            bitquery_result = await self._bitquery.get_ohlcv(token_address, interval=interval, limit=limit)
+            if bitquery_result and bitquery_result.get("ohlcv"):
+                return bitquery_result
+            logger.debug("Bitquery não retornou candles válidos, fallback para Birdeye", extra={"token": token_address})
         if not self.api_key:
-            return None
+            return bitquery_result
 
         try:
             # Mapear interval para type da API (1m, 5m, 1h, 1d)
