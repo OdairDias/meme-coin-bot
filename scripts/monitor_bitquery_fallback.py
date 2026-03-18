@@ -21,6 +21,7 @@ PATTERNS = {
     "deposit": "deposit",
     "gamma_error": "Erro Gamma API",
     "gamma_metadata": "Erro ao buscar metadata",
+    "local_fallback": "Local OHLC fallback gerado",
 }
 ERROR_LEVEL_KEYS = ("level", "@level", "severity")
 

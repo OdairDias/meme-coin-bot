@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # e o bot estaria comprando no topo). 0 = desabilitado; 50 = rejeita se subiu >50%.
     # Só aplicado no modo Bitquery/Birdeye (não CandleBuilder, cujo last_price já é quase real-time).
     MAX_ENTRY_PUMP_PERCENT: float = Field(default=0.0, env="MAX_ENTRY_PUMP_PERCENT")
+    USE_LOCAL_OHLC_FALLBACK: bool = Field(default=False, env="USE_LOCAL_OHLC_FALLBACK")
+    LOCAL_OHLC_CANDLES: int = Field(default=3, env="LOCAL_OHLC_CANDLES")
+    LOCAL_OHLC_CANDLE_INTERVAL_SECONDS: int = Field(default=60, env="LOCAL_OHLC_CANDLE_INTERVAL_SECONDS")
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str | None = Field(default=None, env="TELEGRAM_BOT_TOKEN")

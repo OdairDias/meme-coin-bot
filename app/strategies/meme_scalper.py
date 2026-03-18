@@ -14,6 +14,7 @@ from app.strategies.filters import apply_initial_filters
 from app.strategies.pattern import detect_stairs_pattern
 from app.scanners.birdeye import BirdeyeScanner
 from app.scanners.jupiter import get_sol_price_usd
+from app.scanners.local_ohlc import local_ohlc_builder
 from app.scanners import dexscreener
 
 logger = setup_logger(__name__)
@@ -27,6 +28,7 @@ class MemeScalperStrategy:
         self.logger = logger
         self._recent_tokens: Dict[str, datetime] = {}  # cache de tokens vistos
         self._sol_price_cache: float = 0.0
+        self._local_ohlc_builder = local_ohlc_builder
 
     async def scan_assets(self) -> List[Dict[str, Any]]:
         """
@@ -82,6 +84,8 @@ class MemeScalperStrategy:
                 logger.info(f"📊 Usando candles em tempo real para {asset.get('symbol')} ({len(prebuilt_ohlcv['ohlcv'])} candles)")
             else:
                 ohlcv_data = await self.birdeye.get_ohlcv(token_address, interval="1m", limit=10)
+                if not ohlcv_data or not ohlcv_data.get("ohlcv"):
+                    ohlcv_data = await self._local_ohlcv(token_address, asset)
             if not ohlcv_data or not ohlcv_data.get("ohlcv"):
                 logger.info(f"❌ {asset.get('symbol')} rejeitado: sem OHLCV")
                 continue
@@ -297,3 +301,11 @@ class MemeScalperStrategy:
             score += 10
 
         return min(score, 100.0)
+    async def _local_ohlcv(self, token_address: str, asset: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Tenta gerar OHLCV local quando Bitquery/Birdeye falham."""
+        fallback = await self._local_ohlc_builder.build(token_address, hint_price=asset.get("price_usd"))
+        if fallback:
+            self.logger.info(
+                f"📊 Local OHLC fallback ativado para {asset.get('symbol')} ({token_address[:12]})"
+            )
+        return fallback
