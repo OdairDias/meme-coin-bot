@@ -19,6 +19,8 @@ PATTERNS = {
     "birdeye_fallback": "Birdeye data",
     "queue_overflow": "fila cheia",
     "deposit": "deposit",
+    "gamma_error": "Erro Gamma API",
+    "gamma_metadata": "Erro ao buscar metadata",
 }
 ERROR_LEVEL_KEYS = ("level", "@level", "severity")
 
@@ -34,7 +36,9 @@ def fetch_logs() -> list[dict]:
         "--latest",
         "--json",
     ]
-    result = subprocess.run(cmd, cwd=WORKDIR, capture_output=True, text=True, env=os.environ)
+    env = os.environ.copy()
+    env.pop("RAILWAY_TOKEN", None)
+    result = subprocess.run(cmd, cwd=WORKDIR, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         raise RuntimeError(f"railway logs failed: {result.stderr.strip()}" )
     entries = []
@@ -81,6 +85,8 @@ def persist_report(counts: dict) -> None:
     lines.append(f"- Logs com 'Birdeye data': {counts['birdeye_fallback']}")
     lines.append(f"- Mensagens de fila cheia (sinal de backlog): {counts['queue_overflow']}")
     lines.append(f"- Logs mencionando 'deposit': {counts['deposit']}")
+    lines.append(f"- Erros Gamma API (422 ou similares): {counts['gamma_error']}")
+    lines.append(f"- Erros de metadata de fallback: {counts['gamma_metadata']}")
     lines.append(f"- @level:error ou level=error registrados: {counts['errors']}\n")
     with MONITOR_FILE.open("a", encoding="utf-8") as f:
         f.write("\n".join(lines))
