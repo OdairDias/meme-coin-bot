@@ -30,7 +30,10 @@ class LocalOhlcBuilder:
             info = await get_token_info(token_address)
             price = hint_price or (info and info.get("price_usd"))
             if not price or price <= 0:
-                logger.debug("Local OHLC fallback sem preço válido", token=token_address[:12])
+                logger.debug(
+                    "Local OHLC fallback sem preço válido (token=%s)",
+                    token_address[:12],
+                )
                 return None
 
             volume_24h = (info or {}).get("volume_24h") or 0.0
@@ -51,10 +54,10 @@ class LocalOhlcBuilder:
                 )
 
             logger.info(
-                "Local OHLC fallback gerado",
-                token=token_address[:12],
-                candles=len(candles),
-                price=price,
+                "Local OHLC fallback gerado token=%s candles=%s price=%s",
+                token_address[:12],
+                len(candles),
+                price,
             )
             return {"address": token_address, "ohlcv": candles}
 

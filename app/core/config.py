@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     # APIs
     BIRDEYE_API_KEY: str | None = Field(default=None, env="BIRDEYE_API_KEY")
+    # Se false, não chama Birdeye /defi/ohlcv (economiza compute units). Use Bitquery + CandleBuilder + local OHLC.
+    BIRDEYE_OHLCV_ENABLED: bool = Field(default=True, env="BIRDEYE_OHLCV_ENABLED")
     BITQUERY_API_KEY: str | None = Field(default=None, env="BITQUERY_API_KEY")
     # Delay (s) após detectar token antes de consultar OHLCV (indexação):
     # Birdeye: ~300s (indexação lenta). Bitquery: ~60s (combined dataset é quase real-time).

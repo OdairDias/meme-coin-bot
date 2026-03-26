@@ -149,7 +149,15 @@ class BirdeyeScanner:
             bitquery_result = await self._bitquery.get_ohlcv(token_address, interval=interval, limit=limit)
             if bitquery_result and bitquery_result.get("ohlcv"):
                 return bitquery_result
-            logger.debug("Bitquery não retornou candles válidos, fallback para Birdeye", extra={"token": token_address})
+            logger.debug(
+                "Bitquery não retornou candles válidos para %s",
+                token_address[:12],
+            )
+        if not getattr(settings, "BIRDEYE_OHLCV_ENABLED", True):
+            logger.debug(
+                "Birdeye OHLCV desligado (BIRDEYE_OHLCV_ENABLED=false) — sem fallback HTTP para candles"
+            )
+            return bitquery_result
         if not self.api_key:
             return bitquery_result
 
